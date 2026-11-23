@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0f7a5a">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Receipts">
+  <meta name="description" content="Photograph receipts, name them by date and amount, and save them to Google Drive.">
+  <title>Receipts</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="home-screen">
+    <header class="app-header">
+      <h1>Receipts</h1>
+      <p class="subtitle">Photograph, name, and save</p>
+    </header>
+    <main>
+      <section class="actions">
+        <input id="camera-input" class="visually-hidden" type="file" accept="image/*" capture="environment">
+        <input id="gallery-input" class="visually-hidden" type="file" accept="image/*">
+        <button type="button" class="btn btn-primary" id="camera-btn">Photograph receipt</button>
+        <button type="button" class="btn btn-secondary" id="gallery-btn">Choose from gallery</button>
+      </section>
+      <section class="recent">
+        <h2>Recent receipts</h2>
+        <p id="recent-empty" class="empty">No receipts yet</p>
+        <ul id="recent-list" class="recent-list hidden"></ul>
+      </section>
+    </main>
+  </div>
+
+  <section id="progress-screen" class="panel hidden" aria-live="polite">
+    <div class="panel-inner">
+      <div class="progress-card">
+        <h2 id="progress-title">Reading receipt…</h2>
+        <p id="progress-status" class="note">Looking at the photo</p>
+        <div class="progress-bar" aria-hidden="true"><span id="progress-fill"></span></div>
+      </div>
+      <button type="button" class="btn btn-ghost" id="progress-cancel">Cancel</button>
+    </div>
+  </section>
+
+  <section id="confirm-screen" class="panel hidden">
+    <div class="panel-inner">
+      <h2>Confirm details</h2>
+      <p class="note">Check the merchant, date, and total before saving.</p>
+      <div class="preview-wrap">
+        <img id="confirm-preview" alt="Receipt preview">
+      </div>
+      <div class="fields">
+        <div class="field" id="field-merchant">
+          <label for="input-merchant">Merchant</label>
+          <input id="input-merchant" type="text" maxlength="40" autocomplete="off" autocapitalize="words" placeholder="Store name">
+          <span class="hint" id="hint-merchant"></span>
+        </div>
+        <div class="field" id="field-date">
+          <label for="input-date">Transaction date</label>
+          <input id="input-date" type="date" required>
+          <span class="hint" id="hint-date"></span>
+        </div>
+        <div class="field" id="field-amount">
+          <label for="input-amount">Total amount</label>
+          <input id="input-amount" type="number" inputmode="decimal" step="0.01" min="0" required>
+          <span class="hint" id="hint-amount"></span>
+        </div>
+        <div class="field" id="field-currency">
+          <label for="input-currency">Currency</label>
+          <select id="input-currency">
+            <option value="USD">USD ($)</option>
+            <option value="EUR">EUR (€)</option>
+            <option value="GBP">GBP (£)</option>
+            <option value="CAD">CAD</option>
+            <option value="AUD">AUD</option>
+            <option value="MXN">MXN</option>
+            <option value="JPY">JPY</option>
+            <option value="INR">INR</option>
+            <option value="CHF">CHF</option>
+            <option value="NZD">NZD</option>
+            <option value="SGD">SGD</option>
+            <option value="HKD">HKD</option>
+          </select>
+          <span class="hint" id="hint-currency"></span>
+        </div>
+      </div>
+      <div class="filename-preview">
+        <span class="label">Filename</span>
+        <code id="filename-live"></code>
+      </div>
+      <div class="save-actions">
+        <button type="button" class="btn btn-primary" id="save-drive-btn">Save to Google Drive</button>
+        <p id="drive-note" class="note hidden">Add a Google Client ID in config.js to enable Drive uploads.</p>
+        <button type="button" class="btn btn-secondary" id="share-btn">Share</button>
+        <button type="button" class="btn btn-secondary" id="download-btn">Download</button>
+        <p id="confirm-status" class="status-line hidden" role="status"></p>
+        <button type="button" class="btn btn-ghost" id="confirm-back">Back</button>
+      </div>
+    </div>
+  </section>
+
+  <section id="done-screen" class="panel hidden">
+    <div class="panel-inner">
+      <div class="done-mark" aria-hidden="true">✓</div>
+      <h2>Saved</h2>
+      <p class="note" id="done-message"></p>
+      <div class="filename-preview">
+        <span class="label">Filename</span>
+        <code id="done-filename"></code>
+      </div>
+      <div class="save-actions">
+        <button type="button" class="btn btn-primary" id="done-home">Done</button>
+      </div>
+    </div>
+  </section>
+
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+  <script src="config.js"></script>
+  <script src="parse.js"></script>
+  <script src="drive.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
