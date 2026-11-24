@@ -54,6 +54,7 @@
       <div class="preview-wrap">
         <img id="confirm-preview" alt="Receipt preview">
       </div>
+      <button type="button" class="btn btn-secondary" id="rotate-btn">Rotate</button>
       <div class="fields">
         <div class="field" id="field-merchant">
           <label for="input-merchant">Merchant</label>
@@ -66,27 +67,18 @@
           <span class="hint" id="hint-date"></span>
         </div>
         <div class="field" id="field-amount">
-          <label for="input-amount">Total amount</label>
+          <label for="input-amount">Amount on receipt</label>
           <input id="input-amount" type="number" inputmode="decimal" step="0.01" min="0" required>
           <span class="hint" id="hint-amount"></span>
         </div>
-        <div class="field" id="field-currency">
-          <label for="input-currency">Currency</label>
-          <select id="input-currency">
-            <option value="USD">USD ($)</option>
-            <option value="EUR">EUR (€)</option>
-            <option value="GBP">GBP (£)</option>
-            <option value="CAD">CAD</option>
-            <option value="AUD">AUD</option>
-            <option value="MXN">MXN</option>
-            <option value="JPY">JPY</option>
-            <option value="INR">INR</option>
-            <option value="CHF">CHF</option>
-            <option value="NZD">NZD</option>
-            <option value="SGD">SGD</option>
-            <option value="HKD">HKD</option>
-          </select>
-          <span class="hint" id="hint-currency"></span>
+        <div class="field" id="field-tip">
+          <label for="input-tip">Tip</label>
+          <input id="input-tip" type="number" inputmode="decimal" step="0.01" min="0" placeholder="Optional">
+          <span class="hint" id="hint-tip"></span>
+        </div>
+        <div class="field hidden" id="field-total-charged">
+          <label>Total charged</label>
+          <div id="total-charged" class="total-charged-value"></div>
         </div>
       </div>
       <div class="filename-preview">

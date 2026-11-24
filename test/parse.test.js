@@ -167,25 +167,25 @@ eq(parser.parseReceipt(EUROPEAN).amount, 8.20, 'European decimal comma amount');
 eq(parser.parseReceipt(CAD_RECEIPT).amount, 3.73, 'CAD total amount');
 eq(parser.parseReceipt(TWO_DIGIT_YEAR).amount, 3.25, 'Two-digit year receipt total');
 eq(parser.parseReceipt(BALANCE_DUE).amount, 178.20, 'BALANCE DUE, ignoring tip/change/tax/subtotal');
-eq(parser.parseReceipt(FALLBACK_LARGEST).amount, 12.00, 'Fallback to largest money value');
-eq(parser.parseReceipt(FALLBACK_LARGEST).amountConfidence, 'low', 'Fallback amount confidence is low');
+eq(parser.parseReceipt(FALLBACK_LARGEST).amount, null, 'Unlabeled item prices are not used as the total');
+eq(parser.parseReceipt(FALLBACK_LARGEST).amountConfidence, 'none', 'Missing total is flagged none');
 eq(parser.parseReceipt(GBP).amount, 3.50, 'GBP total');
 eq(parser.parseReceipt(CHARGED).amount, 17.00, 'CHARGED line is used as the total');
 ok(parser.parseReceipt(STARBUCKS).amountConfidence === 'high', 'Labeled total has high amount confidence');
 
 // Currency
-eq(parser.parseReceipt(WALMART).currency, 'USD', 'Dollar sign defaults to USD');
-eq(parser.parseReceipt(EUROPEAN).currency, 'EUR', 'Euro symbol');
-eq(parser.parseReceipt(CAD_RECEIPT).currency, 'CAD', 'CAD code');
-eq(parser.parseReceipt(GBP).currency, 'GBP', 'Pound symbol');
-eq(parser.parseReceipt(NO_DATE).currency, 'USD', 'Dollar sign is USD');
+eq(parser.parseReceipt(WALMART).currency, 'USD', 'Currency is always USD');
+eq(parser.parseReceipt(EUROPEAN).currency, 'USD', 'Euro receipt is still stored as USD');
+eq(parser.parseReceipt(CAD_RECEIPT).currency, 'USD', 'CAD receipt is still stored as USD');
+eq(parser.parseReceipt(GBP).currency, 'USD', 'Pound receipt is still stored as USD');
+eq(parser.parseReceipt(NO_DATE).currency, 'USD', 'No-date receipt is USD');
 
 // Filenames
-eq(parser.buildFilename('2026-11-18', 5.94, 'USD'), '2026-11-18 $5.94.jpg', 'USD filename uses $ and 2 decimals');
-eq(parser.buildFilename('2026-11-18', 8.2, 'EUR'), '2026-11-18 €8.20.jpg', 'EUR filename uses € and pads decimals');
-eq(parser.buildFilename('2026-11-21', 3.5, 'GBP'), '2026-11-21 £3.50.jpg', 'GBP filename uses £');
-eq(parser.buildFilename('2026-11-18', 3.73, 'CAD'), '2026-11-18 CAD 3.73.jpg', 'CAD filename uses the code');
-eq(parser.buildFilename(null, 1.5, 'USD'), 'undated $1.50.jpg', 'Missing date uses undated');
+eq(parser.buildFilename('2026-11-18', 5.94), '2026-11-18 $5.94.jpg', 'Filename uses $ and 2 decimals');
+eq(parser.buildFilename('2026-11-18', 8.2), '2026-11-18 $8.20.jpg', 'Non-USD symbols are not used; always $');
+eq(parser.buildFilename('2026-11-21', 3.5), '2026-11-21 $3.50.jpg', 'Always $ even when the receipt used £');
+eq(parser.buildFilename('2026-11-18', 3.73), '2026-11-18 $3.73.jpg', 'Always $ even when the receipt used CAD');
+eq(parser.buildFilename(null, 1.5), 'undated $1.50.jpg', 'Missing date uses undated');
 eq(
   parser.sanitizeFilename('2026-11-18 $5.94/evil*.jpg'),
   '2026-11-18 $5.94-evil-.jpg',
@@ -193,8 +193,8 @@ eq(
 );
 
 eq(parser.parseReceipt(STARBUCKS).filename, 'Starbucks 2026-11-18 $5.94.jpg', 'End-to-end Starbucks filename');
-eq(parser.parseReceipt(EUROPEAN).filename, 'Boulangerie Dupont 2026-11-18 €8.20.jpg', 'End-to-end European filename');
-eq(parser.parseReceipt(CAD_RECEIPT).filename, 'Tim Hortons 2026-11-18 CAD 3.73.jpg', 'End-to-end CAD filename');
+eq(parser.parseReceipt(EUROPEAN).filename, 'Boulangerie Dupont 2026-11-18 $8.20.jpg', 'End-to-end European filename is USD');
+eq(parser.parseReceipt(CAD_RECEIPT).filename, 'Tim Hortons 2026-11-18 $3.73.jpg', 'End-to-end CAD filename is USD');
 
 
 // Merchant extraction and filenames
@@ -208,16 +208,16 @@ eq(parser.parseReceipt(CAD_RECEIPT).merchant, 'Tim Hortons', 'TIM HORTONS become
 eq(parser.parseReceipt(TWO_DIGIT_YEAR).merchant, 'Corner Store', 'Corner Store heuristic');
 eq(parser.parseReceipt(GBP).merchant, 'Tesco', 'Tesco heuristic');
 
-eq(parser.buildFilename('2026-11-18', 5.94, 'USD', 'Starbucks'), 'Starbucks 2026-11-18 $5.94.jpg', 'Filename puts merchant first');
-eq(parser.buildFilename('2026-11-18', 5.94, 'USD', ''), '2026-11-18 $5.94.jpg', 'Empty merchant falls back to old format');
-eq(parser.buildFilename('2026-11-18', 5.94, 'USD', null), '2026-11-18 $5.94.jpg', 'Missing merchant falls back to old format');
+eq(parser.buildFilename('2026-11-18', 5.94, 'Starbucks'), 'Starbucks 2026-11-18 $5.94.jpg', 'Filename puts merchant first');
+eq(parser.buildFilename('2026-11-18', 5.94, ''), '2026-11-18 $5.94.jpg', 'Empty merchant falls back to old format');
+eq(parser.buildFilename('2026-11-18', 5.94, null), '2026-11-18 $5.94.jpg', 'Missing merchant falls back to old format');
 eq(
-  parser.buildFilename('2026-11-18', 12.5, 'USD', "Ben & Jerry's"),
+  parser.buildFilename('2026-11-18', 12.5, "Ben & Jerry's"),
   "Ben & Jerry's 2026-11-18 $12.50.jpg",
   'Apostrophes and ampersands are kept in merchant filenames'
 );
 eq(
-  parser.buildFilename('2026-11-18', 1, 'USD', 'Foo/Bar:Baz'),
+  parser.buildFilename('2026-11-18', 1, 'Foo/Bar:Baz'),
   'Foo-Bar-Baz 2026-11-18 $1.00.jpg',
   'Illegal merchant filename characters are replaced'
 );
@@ -310,6 +310,86 @@ eq(
   'Very Long Supermarket Name With Too',
   'Merchant names are trimmed to about 40 characters on a word boundary'
 );
+
+
+// Tip math (filename uses printed amount + tip) with two-decimal rounding
+eq(parser.moneySum(225, 45), 270, '225 + 45 tip = 270');
+eq(parser.moneySum('225.00', '45.00'), 270, 'String money values sum correctly');
+eq(parser.moneySum(10.10, 0.05), 10.15, '10.10 + 0.05 = 10.15');
+eq(parser.moneySum(0.1, 0.2), 0.3, 'Floating point 0.1 + 0.2 rounds to 0.30');
+eq(parser.moneySum(19.99, 4.01), 24, '19.99 + 4.01 = 24.00');
+eq(parser.moneySum(2.25, 0.10), 2.35, '2.25 + 0.10 = 2.35');
+eq(parser.moneySum(225, 0), 225, 'Zero tip leaves the printed amount');
+eq(parser.moneySum(225, ''), 225, 'Blank tip is treated as zero');
+eq(parser.moneySum(225, null), 225, 'Null tip is treated as zero');
+eq(
+  parser.buildFilename('2026-11-21', parser.moneySum(225, 45), 'Fabbioli Cellars'),
+  'Fabbioli Cellars 2026-11-21 $270.00.jpg',
+  'Filename uses printed amount plus tip'
+);
+
+// Fabbioli-like printed receipt (ignore handwritten tip and amount saved)
+const FABBIOLI = `
+STORE COPY BELOW
+Fabbioli Cellars
+15669 Limestone School Road
+Leesburg, VA 20176
+(703) 771-1197
+ORDER # 00346009
+DATE/TIME: 11/21/2026 4:12:04 PM
+Item Count: 0
+5 REGULAR              $225.00
+SUBTOTAL               $225.00
+CREDIT CARD PURCHASE   $225.00
+Card Type: MasterCard
+Auth code: 0212207
+Amount Charged : $225.00
+Amount saved: $75.00
+Thanks for visiting Fabbioli Cellars!
+`;
+eq(parser.parseReceipt(FABBIOLI).merchant, 'Fabbioli Cellars', 'Thanks-for-visiting / title line merchant');
+eq(parser.parseReceipt(FABBIOLI).merchantConfidence, 'high', 'Thanks-for-visiting merchant is high confidence');
+eq(parser.parseReceipt(FABBIOLI).date, '2026-11-21', 'DATE/TIME 11/21/2026');
+eq(parser.parseReceipt(FABBIOLI).amount, 225.00, 'Amount Charged / Credit Card Purchase, not amount saved');
+eq(parser.parseReceipt(FABBIOLI).filename, 'Fabbioli Cellars 2026-11-21 $225.00.jpg', 'Fabbioli filename without tip');
+
+const FABBIOLI_NOISE = `
+ATE/TIME: 11/2l/2O26 4:12:04 PM
+CREDIT CARD PURCHASE $225.00
+Amount Charged : $225.00
+Amount saved: $75.00
+Thanks for visiting Fabbioli Cellars!
+`;
+eq(parser.parseReceipt(FABBIOLI_NOISE).date, '2026-11-21', 'Date OCR noise ATE/TIME, l/1, O/0');
+eq(parser.parseReceipt(FABBIOLI_NOISE).merchant, 'Fabbioli Cellars', 'Merchant from thanks line with noisy date');
+eq(parser.parseReceipt(FABBIOLI_NOISE).amount, 225.00, 'Amount still preferred with noisy date');
+
+const GARBAGE_MERCHANT = `
+4 5 OC or
+11/21/2026
+TOTAL $12.00
+`;
+eq(parser.parseReceipt(GARBAGE_MERCHANT).merchant, null, 'Garbage merchant like "4 5 OC or" is rejected');
+eq(parser.parseReceipt(GARBAGE_MERCHANT).merchantConfidence, 'none', 'Rejected merchant is flagged none');
+eq(parser.parseReceipt(GARBAGE_MERCHANT).filename, '2026-11-21 $12.00.jpg', 'Garbage merchant is omitted from the filename');
+
+const HUGE_AMOUNT = `
+Some Store
+11/18/2026
+TOTAL $534523.00
+`;
+eq(parser.parseReceipt(HUGE_AMOUNT).amount, null, 'Implausible totals above 99,999.99 are rejected');
+
+const PHONE_NOT_AMOUNT = `
+Some Store
+11/18/2026
+Tel: 703-771-1197
+TOTAL $25.00
+`;
+eq(parser.parseReceipt(PHONE_NOT_AMOUNT).amount, 25.00, 'Phone numbers are not parsed as amounts');
+
+ok(parser.isPlausibleMerchant('Fabbioli Cellars'), 'Fabbioli Cellars is a plausible merchant');
+ok(!parser.isPlausibleMerchant('4 5 OC or'), '"4 5 OC or" is not a plausible merchant');
 
 // Numeric amount helpers
 eq(parser.parseNumericAmount('1,234.56'), 1234.56, 'US thousands amount');

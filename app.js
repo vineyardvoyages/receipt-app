@@ -3,15 +3,22 @@
 
   var RECENT_KEY = 'receipts.recent.v1';
   var RECENT_LIMIT = 20;
-  var MAX_EDGE = 1600;
+  var SAVE_MAX_EDGE = 1600;
+  var OCR_MAX_EDGE = 2200;
+  var ORIENT_MAX_EDGE = 1000;
   var JPEG_QUALITY = 0.7;
+  var RECEIPT_KEYWORDS =
+    /\b(TOTAL|SUBTOTAL|AMOUNT|CHARGED|DATE|TIME|CARD|CREDIT|PURCHASE|TAX|TIP|AUTH|APPROVED|RECEIPT|STORE|THANKS|VISITING|INVOICE|BALANCE|SIGNATURE|MERCHANT|PAYMENT|ORDER|SALE)\b/gi;
+
   var cancelled = false;
   var ocrWorker = null;
+  var ocrBusy = false;
 
   var state = {
     blob: null,
     previewUrl: null,
-    parsed: null
+    parsed: null,
+    colorCanvas: null
   };
 
   var els = {};
@@ -21,11 +28,11 @@
   }
 
   function show(el) {
-    el.classList.remove('hidden');
+    if (el) el.classList.remove('hidden');
   }
 
   function hide(el) {
-    el.classList.add('hidden');
+    if (el) el.classList.add('hidden');
   }
 
   function setStatus(node, message, ok) {
@@ -53,7 +60,6 @@
     try {
       localStorage.setItem(RECENT_KEY, JSON.stringify(list.slice(0, RECENT_LIMIT)));
     } catch (err) {
-      // If storage is full, retry without thumbnails.
       try {
         var slim = list.slice(0, RECENT_LIMIT).map(function (item) {
           var copy = Object.assign({}, item);
@@ -176,23 +182,258 @@
     });
   }
 
-  async function compressImage(file) {
-    var source = await blobToBitmap(file);
-    var width = source.width;
-    var height = source.height;
-    var longEdge = Math.max(width, height) || 1;
-    var scale = longEdge > MAX_EDGE ? MAX_EDGE / longEdge : 1;
-    var w = Math.max(1, Math.round(width * scale));
-    var h = Math.max(1, Math.round(height * scale));
+  function sourceSize(source) {
+    return { width: source.width, height: source.height };
+  }
+
+  function drawToCanvas(source, maxEdge, fill) {
+    var size = sourceSize(source);
+    var longEdge = Math.max(size.width, size.height) || 1;
+    var scale = maxEdge && longEdge > maxEdge ? maxEdge / longEdge : 1;
+    var w = Math.max(1, Math.round(size.width * scale));
+    var h = Math.max(1, Math.round(size.height * scale));
     var canvas = document.createElement('canvas');
     canvas.width = w;
     canvas.height = h;
-    var ctx = canvas.getContext('2d');
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, 0, w, h);
+    var ctx = canvas.getContext('2d', { willReadFrequently: true });
+    if (fill) {
+      ctx.fillStyle = fill;
+      ctx.fillRect(0, 0, w, h);
+    }
     ctx.drawImage(source, 0, 0, w, h);
-    if (typeof source.close === 'function') source.close();
-    return canvasToJpegBlob(canvas, JPEG_QUALITY);
+    return canvas;
+  }
+
+  function cropCanvas(source, box) {
+    var canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, box.w);
+    canvas.height = Math.max(1, box.h);
+    var ctx = canvas.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(source, box.x, box.y, box.w, box.h, 0, 0, box.w, box.h);
+    return canvas;
+  }
+
+  function rotateCanvas(source, degrees) {
+    var deg = ((degrees % 360) + 360) % 360;
+    if (deg === 0) return drawToCanvas(source, 0);
+    var w = source.width;
+    var h = source.height;
+    var canvas = document.createElement('canvas');
+    if (deg % 180 === 0) {
+      canvas.width = w;
+      canvas.height = h;
+    } else {
+      canvas.width = h;
+      canvas.height = w;
+    }
+    var ctx = canvas.getContext('2d', { willReadFrequently: true });
+    ctx.translate(canvas.width / 2, canvas.height / 2);
+    ctx.rotate(deg * Math.PI / 180);
+    ctx.drawImage(source, -w / 2, -h / 2);
+    return canvas;
+  }
+
+  function toGrayscaleContrast(source) {
+    var canvas = drawToCanvas(source, 0);
+    var ctx = canvas.getContext('2d', { willReadFrequently: true });
+    var img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    var data = img.data;
+    var min = 255;
+    var max = 0;
+    var i;
+    for (i = 0; i < data.length; i += 4) {
+      var g = Math.round(0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2]);
+      data[i] = data[i + 1] = data[i + 2] = g;
+      if (g < min) min = g;
+      if (g > max) max = g;
+    }
+    var span = max - min || 1;
+    // Contrast stretch, then a slight push toward black/white for text.
+    for (i = 0; i < data.length; i += 4) {
+      var v = (data[i] - min) / span;
+      v = Math.max(0, Math.min(1, (v - 0.08) / 0.84));
+      var out = Math.round(v * 255);
+      data[i] = data[i + 1] = data[i + 2] = out;
+    }
+    ctx.putImageData(img, 0, 0);
+    return canvas;
+  }
+
+  function otsuThreshold(hist, total) {
+    var sum = 0;
+    var t;
+    for (t = 0; t < 256; t++) sum += t * hist[t];
+    var sumB = 0;
+    var wB = 0;
+    var max = 0;
+    var threshold = 180;
+    for (t = 0; t < 256; t++) {
+      wB += hist[t];
+      if (!wB) continue;
+      var wF = total - wB;
+      if (!wF) break;
+      sumB += t * hist[t];
+      var mB = sumB / wB;
+      var mF = (sum - sumB) / wF;
+      var between = wB * wF * (mB - mF) * (mB - mF);
+      if (between > max) {
+        max = between;
+        threshold = t;
+      }
+    }
+    return threshold;
+  }
+
+  function findPaperBox(source) {
+    var probe = drawToCanvas(source, 480);
+    var ctx = probe.getContext('2d', { willReadFrequently: true });
+    var img = ctx.getImageData(0, 0, probe.width, probe.height);
+    var data = img.data;
+    var hist = new Array(256);
+    var i;
+    for (i = 0; i < 256; i++) hist[i] = 0;
+    var gray = new Uint8Array(probe.width * probe.height);
+    for (i = 0; i < gray.length; i++) {
+      var o = i * 4;
+      var g = Math.round(0.299 * data[o] + 0.587 * data[o + 1] + 0.114 * data[o + 2]);
+      gray[i] = g;
+      hist[g]++;
+    }
+    var threshold = Math.max(140, otsuThreshold(hist, gray.length));
+    var minX = probe.width;
+    var minY = probe.height;
+    var maxX = -1;
+    var maxY = -1;
+    var paper = 0;
+    for (i = 0; i < gray.length; i++) {
+      if (gray[i] < threshold) continue;
+      paper++;
+      var x = i % probe.width;
+      var y = (i / probe.width) | 0;
+      if (x < minX) minX = x;
+      if (y < minY) minY = y;
+      if (x > maxX) maxX = x;
+      if (y > maxY) maxY = y;
+    }
+    var ratio = paper / gray.length;
+    if (ratio < 0.08 || ratio > 0.96 || maxX < minX) return null;
+    var padX = Math.round((maxX - minX + 1) * 0.04);
+    var padY = Math.round((maxY - minY + 1) * 0.04);
+    minX = Math.max(0, minX - padX);
+    minY = Math.max(0, minY - padY);
+    maxX = Math.min(probe.width - 1, maxX + padX);
+    maxY = Math.min(probe.height - 1, maxY + padY);
+    var sx = source.width / probe.width;
+    var sy = source.height / probe.height;
+    return {
+      x: Math.round(minX * sx),
+      y: Math.round(minY * sy),
+      w: Math.round((maxX - minX + 1) * sx),
+      h: Math.round((maxY - minY + 1) * sy)
+    };
+  }
+
+  function horizontalTextScore(canvas) {
+    var probe = drawToCanvas(canvas, 320);
+    var ctx = probe.getContext('2d', { willReadFrequently: true });
+    var img = ctx.getImageData(0, 0, probe.width, probe.height);
+    var data = img.data;
+    var w = probe.width;
+    var h = probe.height;
+    var rowInk = new Float64Array(h);
+    var colInk = new Float64Array(w);
+    var y;
+    var x;
+    for (y = 0; y < h; y++) {
+      for (x = 0; x < w; x++) {
+        var g = data[(y * w + x) * 4];
+        if (g < 140) {
+          rowInk[y]++;
+          colInk[x]++;
+        }
+      }
+    }
+    function variance(arr, len, denom) {
+      var mean = 0;
+      var i;
+      for (i = 0; i < len; i++) mean += arr[i] / denom;
+      mean /= len;
+      var v = 0;
+      for (i = 0; i < len; i++) {
+        var d = arr[i] / denom - mean;
+        v += d * d;
+      }
+      return v / len;
+    }
+    function bandCount(arr, len, denom) {
+      var count = 0;
+      var inBand = false;
+      var i;
+      for (i = 0; i < len; i++) {
+        var frac = arr[i] / denom;
+        var isText = frac > 0.02 && frac < 0.55;
+        if (isText && !inBand) {
+          count++;
+          inBand = true;
+        } else if (!isText) {
+          inBand = false;
+        }
+      }
+      return count;
+    }
+    var rowVar = variance(rowInk, h, w);
+    var colVar = variance(colInk, w, h);
+    var rows = bandCount(rowInk, h, w);
+    // Upright receipt text makes stripy horizontal lines: high row variance, many bands.
+    return rowVar * 8 + rows * 0.35 - colVar * 2;
+  }
+
+  function keywordScore(text) {
+    if (!text) return 0;
+    var matches = String(text).match(RECEIPT_KEYWORDS);
+    var letters = (String(text).match(/[A-Za-z]/g) || []).length;
+    return (matches ? matches.length : 0) * 8 + Math.min(letters, 500) * 0.04;
+  }
+
+  async function detectOrientation(colorCanvas, worker) {
+    var base = toGrayscaleContrast(drawToCanvas(colorCanvas, ORIENT_MAX_EDGE));
+    var degrees = [0, 90, 180, 270];
+    var scored = degrees.map(function (deg) {
+      var rotated = deg === 0 ? base : rotateCanvas(base, deg);
+      return { deg: deg, structure: horizontalTextScore(rotated), canvas: rotated };
+    });
+    scored.sort(function (a, b) { return b.structure - a.structure; });
+
+    // Projection finds the reading axis but not which way is up (0 vs 180).
+    var axis = [scored[0], scored[1] && Math.abs(scored[0].deg - scored[1].deg) === 180 ? scored[1] : null];
+    if (!axis[1]) {
+      var flip = (scored[0].deg + 180) % 360;
+      var found = scored.filter(function (s) { return s.deg === flip; })[0];
+      axis[1] = found || scored[1];
+    }
+
+    var best = axis[0];
+    var bestScore = -1;
+    var i;
+    for (i = 0; i < axis.length; i++) {
+      if (!axis[i] || cancelled) continue;
+      if (els.progressStatus) {
+        setProgress('Checking orientation…', 'Trying rotation ' + axis[i].deg + '°', 20 + i * 15);
+      }
+      try {
+        var result = await worker.recognize(axis[i].canvas);
+        var text = (result && result.data && result.data.text) || '';
+        var conf = result && result.data && typeof result.data.confidence === 'number' ? result.data.confidence : 0;
+        var score = axis[i].structure + keywordScore(text) + conf * 0.4;
+        if (score > bestScore) {
+          bestScore = score;
+          best = axis[i];
+        }
+      } catch (err) {
+        // Keep the structural pick if a probe OCR fails.
+      }
+    }
+    return best ? best.deg : 0;
   }
 
   async function makeThumbnail(blob) {
@@ -238,22 +479,41 @@
   }
 
   function setProgress(title, status, percent) {
+    if (!els.progressTitle) return;
     els.progressTitle.textContent = title || 'Reading receipt…';
     els.progressStatus.textContent = status || '';
     var value = Math.max(0, Math.min(100, Number(percent) || 0));
     els.progressFill.style.width = value + '%';
   }
 
+  function tipValue() {
+    if (!els.inputTip || els.inputTip.value === '') return 0;
+    var n = Number(els.inputTip.value);
+    return Number.isFinite(n) && n > 0 ? n : 0;
+  }
+
+  function chargedTotal() {
+    var amount = els.inputAmount.value === '' ? NaN : Number(els.inputAmount.value);
+    return ReceiptParser.moneySum(amount, tipValue());
+  }
+
   function currentFilename() {
     var date = els.inputDate.value || '';
-    var amount = els.inputAmount.value === '' ? NaN : Number(els.inputAmount.value);
-    var currency = els.inputCurrency.value || 'USD';
     var merchant = els.inputMerchant.value || '';
-    return ReceiptParser.buildFilename(date, amount, currency, merchant);
+    return ReceiptParser.buildFilename(date, chargedTotal(), merchant);
   }
 
   function updateFilenamePreview() {
     els.filenameLive.textContent = currentFilename();
+    var tip = tipValue();
+    var total = chargedTotal();
+    if (tip > 0 && total != null) {
+      els.totalCharged.textContent = '$' + total.toFixed(2);
+      show(els.fieldTotalCharged);
+    } else {
+      els.totalCharged.textContent = '';
+      hide(els.fieldTotalCharged);
+    }
   }
 
   function markUncertain(fieldEl, hintEl, uncertain, message) {
@@ -266,14 +526,7 @@
     els.inputMerchant.value = parsed.merchant || '';
     els.inputDate.value = parsed.date || '';
     els.inputAmount.value = parsed.amount == null ? '' : Number(parsed.amount).toFixed(2);
-    var currency = parsed.currency || 'USD';
-    if (![].some.call(els.inputCurrency.options, function (opt) { return opt.value === currency; })) {
-      var opt = document.createElement('option');
-      opt.value = currency;
-      opt.textContent = currency;
-      els.inputCurrency.appendChild(opt);
-    }
-    els.inputCurrency.value = currency;
+    if (els.inputTip) els.inputTip.value = '';
 
     markUncertain(
       els.fieldMerchant,
@@ -292,12 +545,6 @@
       els.hintAmount,
       parsed.amount == null || parsed.amountConfidence !== 'high',
       parsed.amount == null ? 'No total found — enter one' : 'Please check the total'
-    );
-    markUncertain(
-      els.fieldCurrency,
-      els.hintCurrency,
-      parsed.currencyConfidence !== 'high',
-      'Currency was guessed'
     );
     updateFilenamePreview();
     setStatus(els.confirmStatus, '', false);
@@ -326,8 +573,14 @@
       return false;
     }
     if (!Number.isFinite(amount)) {
-      setStatus(els.confirmStatus, 'Enter the total amount first.', false);
+      setStatus(els.confirmStatus, 'Enter the amount on the receipt first.', false);
       els.inputAmount.focus();
+      return false;
+    }
+    var tip = els.inputTip && els.inputTip.value !== '' ? Number(els.inputTip.value) : 0;
+    if (els.inputTip && els.inputTip.value !== '' && (!Number.isFinite(tip) || tip < 0)) {
+      setStatus(els.confirmStatus, 'Enter a valid tip, or leave it blank.', false);
+      els.inputTip.focus();
       return false;
     }
     return true;
@@ -336,12 +589,15 @@
   async function recordAndFinish(savedTo) {
     var filename = currentFilename();
     var thumbnail = await makeThumbnail(state.blob);
+    var tip = tipValue();
     addRecent({
       filename: filename,
       merchant: (els.inputMerchant.value || '').trim() || undefined,
       date: els.inputDate.value,
       amount: Number(els.inputAmount.value),
-      currency: els.inputCurrency.value,
+      tip: tip || undefined,
+      total: chargedTotal(),
+      currency: 'USD',
       savedTo: savedTo,
       timestamp: Date.now(),
       thumbnail: thumbnail || undefined
@@ -407,30 +663,6 @@
     await recordAndFinish('Downloaded');
   }
 
-  async function recognize(blob) {
-    if (typeof Tesseract === 'undefined' || typeof Tesseract.createWorker !== 'function') {
-      throw new Error('The text reader failed to load. Check your connection and try again.');
-    }
-    setProgress('Reading receipt…', 'Starting…', 5);
-    var worker = await Tesseract.createWorker('eng', 1, {
-      logger: function (message) {
-        if (cancelled) return;
-        if (!message) return;
-        var pct = typeof message.progress === 'number' ? Math.round(message.progress * 100) : 0;
-        var status = message.status ? prettyOcrStatus(message.status) : 'Working…';
-        setProgress('Reading receipt…', status + (pct ? ' (' + pct + '%)' : ''), Math.max(8, pct));
-      }
-    });
-    ocrWorker = worker;
-    try {
-      var result = await worker.recognize(blob);
-      return (result && result.data && result.data.text) || '';
-    } finally {
-      try { await worker.terminate(); } catch (err) { /* ignore */ }
-      if (ocrWorker === worker) ocrWorker = null;
-    }
-  }
-
   function prettyOcrStatus(status) {
     var map = {
       'loading tesseract core': 'Loading reader',
@@ -439,7 +671,27 @@
       'initializing api': 'Preparing',
       'recognizing text': 'Reading text'
     };
-    return map[status] || status.replace(/_/g, ' ');
+    return map[status] || String(status || '').replace(/_/g, ' ');
+  }
+
+  async function getWorker() {
+    if (typeof Tesseract === 'undefined' || typeof Tesseract.createWorker !== 'function') {
+      throw new Error('The text reader failed to load. Check your connection and try again.');
+    }
+    if (ocrWorker) return ocrWorker;
+    ocrWorker = await Tesseract.createWorker('eng', 1, {
+      logger: function (message) {
+        if (cancelled || !message) return;
+        if (ocrBusy) return;
+        var pct = typeof message.progress === 'number' ? Math.round(message.progress * 100) : 0;
+        var status = message.status ? prettyOcrStatus(message.status) : 'Working…';
+        setProgress('Reading receipt…', status + (pct ? ' (' + pct + '%)' : ''), Math.max(55, 55 + pct * 0.4));
+      }
+    });
+    try {
+      await ocrWorker.setParameters({ tessedit_pageseg_mode: '6' });
+    } catch (err) { /* default PSM is fine */ }
+    return ocrWorker;
   }
 
   async function cancelOcr() {
@@ -451,28 +703,78 @@
     showScreen('home');
   }
 
+  async function prepareImage(file) {
+    setProgress('Preparing photo…', 'Loading', 4);
+    var bitmap = await blobToBitmap(file);
+    var working = drawToCanvas(bitmap, 3200, '#ffffff');
+    if (typeof bitmap.close === 'function') bitmap.close();
+    if (cancelled) return null;
+
+    setProgress('Preparing photo…', 'Finding the receipt', 10);
+    var paper = findPaperBox(working);
+    var cropped = paper ? cropCanvas(working, paper) : working;
+
+    setProgress('Checking orientation…', 'Looking at the layout', 16);
+    var worker = await getWorker();
+    if (cancelled) return null;
+    ocrBusy = true;
+    var rotation;
+    try {
+      rotation = await detectOrientation(cropped, worker);
+    } finally {
+      ocrBusy = false;
+    }
+    if (cancelled) return null;
+
+    var upright = rotateCanvas(cropped, rotation);
+    state.colorCanvas = drawToCanvas(upright, 2600, '#ffffff');
+    try { window.__receiptRotation = rotation; } catch (debugErr) { /* ignore */ }
+    return state.colorCanvas;
+  }
+
+  async function refreshSavePreview(colorCanvas) {
+    var saveCanvas = drawToCanvas(colorCanvas, SAVE_MAX_EDGE, '#ffffff');
+    var blob = await canvasToJpegBlob(saveCanvas, JPEG_QUALITY);
+    state.blob = blob;
+    revokePreview();
+    state.previewUrl = URL.createObjectURL(blob);
+    els.confirmPreview.src = state.previewUrl;
+    return blob;
+  }
+
+  async function ocrPreparedCanvas(colorCanvas) {
+    var ocrSource = toGrayscaleContrast(drawToCanvas(colorCanvas, OCR_MAX_EDGE));
+    ocrBusy = false;
+    setProgress('Reading receipt…', 'Reading text', 58);
+    var worker = await getWorker();
+    var result = await worker.recognize(ocrSource);
+    var text = (result && result.data && result.data.text) || '';
+    try {
+      window.__receiptDebug = {
+        text: text,
+        confidence: result && result.data && result.data.confidence,
+        parsed: ReceiptParser.parseReceipt(text)
+      };
+    } catch (debugErr) { /* ignore */ }
+    return text;
+  }
+
   async function handleFile(file) {
     if (!file) return;
     cancelled = false;
     showScreen('progress');
-    setProgress('Preparing photo…', 'Compressing', 2);
+    setProgress('Preparing photo…', 'Starting', 2);
     try {
-      var blob = await compressImage(file);
+      var color = await prepareImage(file);
+      if (cancelled || !color) return;
+      await refreshSavePreview(color);
       if (cancelled) return;
-      state.blob = blob;
-      revokePreview();
-      state.previewUrl = URL.createObjectURL(blob);
-      els.confirmPreview.src = state.previewUrl;
-      setProgress('Reading receipt…', 'Looking at the photo', 8);
-      var text = await recognize(blob);
+      var text = await ocrPreparedCanvas(color);
       if (cancelled) return;
-      var parsed = ReceiptParser.parseReceipt(text);
-      fillConfirm(parsed);
+      fillConfirm(ReceiptParser.parseReceipt(text));
       showScreen('confirm');
     } catch (err) {
       if (cancelled) return;
-      // Still let the user enter details by hand.
-      state.blob = state.blob || file;
       if (!state.previewUrl && state.blob) {
         state.previewUrl = URL.createObjectURL(state.blob);
         els.confirmPreview.src = state.previewUrl;
@@ -484,7 +786,7 @@
         merchant: null,
         dateConfidence: 'none',
         amountConfidence: 'none',
-        currencyConfidence: 'low',
+        currencyConfidence: 'high',
         merchantConfidence: 'none'
       });
       showScreen('confirm');
@@ -493,6 +795,26 @@
         (err && err.message ? err.message : 'Could not read the receipt.') + ' You can enter the details yourself.',
         false
       );
+    }
+  }
+
+  async function onRotate() {
+    if (!state.colorCanvas || cancelled) return;
+    cancelled = false;
+    showScreen('progress');
+    setProgress('Rotating…', 'Turning the photo', 12);
+    try {
+      state.colorCanvas = rotateCanvas(state.colorCanvas, 90);
+      await refreshSavePreview(state.colorCanvas);
+      if (cancelled) return;
+      var text = await ocrPreparedCanvas(state.colorCanvas);
+      if (cancelled) return;
+      fillConfirm(ReceiptParser.parseReceipt(text));
+      showScreen('confirm');
+    } catch (err) {
+      if (cancelled) return;
+      showScreen('confirm');
+      setStatus(els.confirmStatus, err && err.message ? err.message : 'Could not rotate and re-read the receipt.', false);
     }
   }
 
@@ -523,18 +845,21 @@
     els.progressFill = $('progress-fill');
     els.progressCancel = $('progress-cancel');
     els.confirmPreview = $('confirm-preview');
+    els.rotateBtn = $('rotate-btn');
     els.inputMerchant = $('input-merchant');
     els.inputDate = $('input-date');
     els.inputAmount = $('input-amount');
-    els.inputCurrency = $('input-currency');
+    els.inputTip = $('input-tip');
     els.fieldMerchant = $('field-merchant');
     els.fieldDate = $('field-date');
     els.fieldAmount = $('field-amount');
-    els.fieldCurrency = $('field-currency');
+    els.fieldTip = $('field-tip');
+    els.fieldTotalCharged = $('field-total-charged');
+    els.totalCharged = $('total-charged');
     els.hintMerchant = $('hint-merchant');
     els.hintDate = $('hint-date');
     els.hintAmount = $('hint-amount');
-    els.hintCurrency = $('hint-currency');
+    els.hintTip = $('hint-tip');
     els.filenameLive = $('filename-live');
     els.saveDriveBtn = $('save-drive-btn');
     els.driveNote = $('drive-note');
@@ -561,20 +886,23 @@
       els.inputMerchant.addEventListener(evt, updateFilenamePreview);
       els.inputDate.addEventListener(evt, updateFilenamePreview);
       els.inputAmount.addEventListener(evt, updateFilenamePreview);
-      els.inputCurrency.addEventListener(evt, updateFilenamePreview);
+      els.inputTip.addEventListener(evt, updateFilenamePreview);
     });
 
+    els.rotateBtn.addEventListener('click', function () { onRotate(); });
     els.saveDriveBtn.addEventListener('click', function () { onSaveDrive(); });
     els.shareBtn.addEventListener('click', function () { onShare(); });
     els.downloadBtn.addEventListener('click', function () { onDownload(); });
     els.confirmBack.addEventListener('click', function () {
       revokePreview();
       state.blob = null;
+      state.colorCanvas = null;
       showScreen('home');
     });
     els.doneHome.addEventListener('click', function () {
       revokePreview();
       state.blob = null;
+      state.colorCanvas = null;
       showScreen('home');
     });
     els.progressCancel.addEventListener('click', function () { cancelOcr(); });

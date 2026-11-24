@@ -1,19 +1,19 @@
 # Receipts
 
-A mobile-first Progressive Web App that photographs a receipt, reads the merchant, transaction date, and total, names the image, and saves it to a Google Drive folder called **Receipts**. You can also share or download the correctly named photo if Drive is not set up.
+A mobile-first Progressive Web App that photographs a receipt, reads the merchant, transaction date, and printed total, names the image, and saves it to a Google Drive folder called **Receipts**. You can also share or download the correctly named photo if Drive is not set up.
 
 The app is static (plain HTML, CSS, and JavaScript). There is no build step. Serve the folder as-is, including from a GitHub Pages project site such as `https://USER.github.io/receipt-app/`. All paths are relative so a subpath deploy works.
 
 ## Filename and folder
 
 - **Drive folder name:** `Receipts` (created automatically if this app has not created it yet)
-- **Filename format:** `Merchant YYYY-MM-DD $5.94.jpg` (for example `Starbucks 2026-11-18 $5.94.jpg`)
-  - If no merchant is found, the name falls back to `YYYY-MM-DD $5.94.jpg`
-  - USD uses `$`, EUR uses `€`, GBP uses `£`
-  - Other currencies use the code, for example `Starbucks 2026-11-18 CAD 5.94.jpg`
+- **Filename format:** `Merchant YYYY-MM-DD $225.00.jpg` (for example `Fabbioli Cellars 2026-11-21 $270.00.jpg`)
+  - Amounts are always US dollars and always use `$`
+  - If you enter a tip, the amount in the filename is the printed total plus the tip
+  - If no merchant is found, the name falls back to `YYYY-MM-DD $225.00.jpg`
   - Amounts always have two decimal places
 
-On-device OCR is imperfect. The confirm screen always lets you edit the merchant, date, amount, and currency before saving. Uncertain fields are highlighted.
+On-device OCR is imperfect. The confirm screen always lets you edit the merchant, date, and amount, and add an optional tip, before saving. Uncertain fields are highlighted. Photos that are sideways are rotated automatically; you can also tap **Rotate** to turn the image and read it again.
 
 ## Run locally
 

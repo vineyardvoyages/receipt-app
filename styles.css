@@ -406,3 +406,19 @@ main {
     font-size: 17px;
   }
 }
+
+#rotate-btn {
+  margin: 0 0 16px;
+}
+
+.total-charged-value {
+  background: var(--accent-soft);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 12px;
+  min-height: 48px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  display: flex;
+  align-items: center;
+}

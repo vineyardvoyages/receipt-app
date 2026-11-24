@@ -1,6 +1,9 @@
 /**
  * Receipt text parser. Works in the browser (global ReceiptParser)
  * and in Node (module.exports) so the same code can be unit-tested.
+ *
+ * Currency is always USD. Filename amount is the value passed in
+ * (the UI adds any tip before calling buildFilename).
  */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
@@ -10,6 +13,8 @@
   }
 })(typeof self !== 'undefined' ? self : this, function () {
   'use strict';
+
+  var MAX_AMOUNT = 99999.99;
 
   var MONTHS = {
     jan: 1, january: 1,
@@ -30,25 +35,14 @@
     'jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|' +
     'jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?';
 
-  var CURRENCY_CODES = {
-    USD: '$', EUR: '€', GBP: '£', JPY: '¥',
-    CAD: null, AUD: null, NZD: null, MXN: null,
-    INR: null, CHF: null, CNY: null, HKD: null, SGD: null
-  };
-
-  var SYMBOL_TO_CODE = {
-    '$': 'USD',
-    '€': 'EUR',
-    '£': 'GBP',
-    '¥': 'JPY',
-    '₹': 'INR'
-  };
-
   var EXCLUDE_LINE =
-    /\b(sub[\s\-]*totals?|sales\s*tax|vat|gst|hst|pst|qst|tax(?:es)?|tip|gratuity|change|cash(?:\s*(?:tendered|given|paid|back))?|tender(?:ed)?|savings?|discounts?|deposits?|coupons?|qty|quantity)\b/i;
+    /\b(sub[\s\-]*totals?|sales\s*tax|vat|gst|hst|pst|qst|tax(?:es)?|tip|gratuity|change|cash(?:\s*(?:tendered|given|paid|back))?|tender(?:ed)?|savings?|saved|amount\s+saved|you\s+saved|discounts?|deposits?|coupons?|qty|quantity)\b/i;
 
   var TOTAL_LINE =
-    /\b((?:grand|invoice|order|card|visa|mastercard|mc|amex|discover|debit|credit)\s+total|total\s+(?:due|amount|charged|purchase|sales?)|amount\s+(?:due|charged|paid|tendered)?|balance(?:\s+due)?|charged|please\s+pay|you\s+(?:paid|pay)|payment(?:\s+due)?|total)\b/i;
+    /\b((?:grand|invoice|order)\s+totals?|credit\s+card\s+purchase|card\s+purchase|(?:visa|mastercard|mc|amex|discover|debit|credit)\s+total|total\s+(?:due|amount|charged|purchase|sales?)|amount\s+(?:due|charged|paid)|balance(?:\s+due)?|amount\s+charged|charged|please\s+pay|you\s+(?:paid|pay)|payment(?:\s+due)?|total)\b/i;
+
+  var PREFERRED_TOTAL =
+    /\b(amount\s+charged|grand\s+totals?|credit\s+card\s+purchase|card\s+purchase|total\s+(?:due|charged)|balance(?:\s+due)?)\b/i;
 
   function pad(n) {
     return String(n).padStart(2, '0');
@@ -93,11 +87,22 @@
   }
 
   function nearDateLabel(context) {
-    return /\b(date|dated|txn|trans(?:action)?(?:\s*date)?|purchased|sold)\b/i.test(context);
+    return /\b((?:d)?ate(?:\s*\/\s*|\s+)?time|ate\s*\/\s*time|date|dated|txn|trans(?:action)?(?:\s*date)?|purchased|sold)\b/i.test(context);
+  }
+
+  // Fix common OCR confusions only inside date-like tokens (O/0, l/I/1).
+  function normalizeDateTokens(text) {
+    return String(text || '').replace(
+      /\b[0-9OIl]{1,4}[\/.\-][0-9OIl]{1,2}[\/.\-][0-9OIl]{2,4}\b/g,
+      function (tok) {
+        return tok.replace(/[Oo]/g, '0').replace(/[Il]/g, '1');
+      }
+    );
   }
 
   function collectDates(text) {
     var candidates = [];
+    text = normalizeDateTokens(text || '');
 
     function add(match, date, confidence, ambiguous) {
       if (!date) return;
@@ -145,7 +150,6 @@
       var a = Number(m[1]);
       var b = Number(m[2]);
       var y = m[3];
-      // Skip ISO years already handled (would require a 4-digit first group).
       var ambiguous = false;
       var date = null;
       if (a > 12 && b <= 12) {
@@ -196,56 +200,35 @@
     return Math.round(value * 100) / 100;
   }
 
-  function detectCurrencyIn(text) {
-    if (!text) return null;
-    var ca = text.match(/\b(?:CAD|C(?:A)?\$)/i) || text.match(/\$\s*CAD\b/i);
-    if (ca) return { code: 'CAD', confidence: 'high' };
-    var au = text.match(/\b(?:AUD|A(?:U)?\$)/i);
-    if (au) return { code: 'AUD', confidence: 'high' };
-    var nz = text.match(/\b(?:NZD|NZ\$)/i);
-    if (nz) return { code: 'NZD', confidence: 'high' };
-    var mx = text.match(/\b(?:MXN|MX\$)/i);
-    if (mx) return { code: 'MXN', confidence: 'high' };
-    var us = text.match(/\b(?:USD|US\$)\b/i);
-    if (us) return { code: 'USD', confidence: 'high' };
-
-    var code = text.match(/\b(USD|EUR|GBP|CAD|AUD|NZD|MXN|JPY|INR|CHF|CNY|HKD|SGD)\b/i);
-    if (code) return { code: code[1].toUpperCase(), confidence: 'high' };
-
-    if (/€/.test(text)) return { code: 'EUR', confidence: 'high' };
-    if (/£/.test(text)) return { code: 'GBP', confidence: 'high' };
-    if (/¥/.test(text)) return { code: 'JPY', confidence: 'high' };
-    if (/₹/.test(text)) return { code: 'INR', confidence: 'high' };
-    if (/\$/.test(text)) return { code: 'USD', confidence: 'medium' };
-    return null;
-  }
-
-  var CURRENCY_ATOM =
-    '(?:(?:US|CA|AU|NZ|MX|C|A)?\\$|€|£|¥|₹|\\b(?:USD|EUR|GBP|CAD|AUD|NZD|MXN|JPY|INR|CHF)\\b)';
+  // Money values used as receipt totals must have cents and stay in a sane range.
   var AMOUNT_ATOM =
-    '(\\(?\\d{1,3}(?:[.,]\\d{3})+[.,]\\d{2}\\)?|\\(?\\d+[.,]\\d{2}\\)?|\\(?\\d{1,6}\\)?)';
-  var MONEY_TOKEN = new RegExp(CURRENCY_ATOM + '?\\s*' + AMOUNT_ATOM + '\\s*' + CURRENCY_ATOM + '?', 'gi');
+    '(\\(?\\d{1,2}[.,]\\d{3}[.,]\\d{2}\\)?|\\(?\\d{1,5}[.,]\\d{2}\\)?)';
+  var MONEY_TOKEN = new RegExp('\\$?\\s*' + AMOUNT_ATOM, 'gi');
+
+  function hasSurroundingDigits(line, match) {
+    var start = match.index;
+    var end = match.index + match[0].length;
+    var before = start > 0 ? line.charAt(start - 1) : '';
+    var after = end < line.length ? line.charAt(end) : '';
+    return /\d/.test(before) || /\d/.test(after);
+  }
 
   function extractAmountsFromLine(line) {
     var found = [];
     var tokenRe = new RegExp(MONEY_TOKEN.source, 'gi');
     var m;
     while ((m = tokenRe.exec(line))) {
+      if (hasSurroundingDigits(line, m)) continue;
+      var rawNum = m[1].replace(/[()]/g, '');
+      if (!/[.,]\d{2}$/.test(rawNum)) continue;
       var amount = parseNumericAmount(m[1]);
       if (amount == null) continue;
-      // Ignore bare long integers that look like IDs, phones, or barcodes.
-      var rawNum = m[1].replace(/[()]/g, '');
-      var isPlainInt = /^\d+$/.test(rawNum);
-      if (isPlainInt && rawNum.length >= 7) continue;
-      // Skip bare years so dates like 2026-11-18 are not treated as amounts.
-      if (isPlainInt && amount >= 1900 && amount <= 2099) continue;
-      if (Math.abs(amount) > 1000000) continue;
-      var slice = m[0];
+      if (amount <= 0 || amount > MAX_AMOUNT) continue;
       found.push({
         amount: amount,
         raw: m[0],
-        hasDecimals: /[.,]\d{1,2}\)?$/.test(rawNum),
-        currency: detectCurrencyIn(slice)
+        hasDecimals: true,
+        preferred: PREFERRED_TOTAL.test(line)
       });
     }
     return found;
@@ -253,15 +236,17 @@
 
   function isExcludedLine(line) {
     if (!EXCLUDE_LINE.test(line)) return false;
-    // "TOTAL" lines that happen to mention tax in a phrase like "total tax" stay excluded.
-    // A true total line such as "TOTAL" should not be excluded just because the word
-    // "total" is not an exclude term. "SUBTOTAL" is excluded via sub-total.
     return true;
   }
 
   function isTotalLine(line) {
     if (isExcludedLine(line)) return false;
     return TOTAL_LINE.test(line);
+  }
+
+  function isIdLikeLine(line) {
+    return /\b(auth(?:orization)?(?:\s*code)?|approval|invoice\s*#|order\s*#|account|phone|tel\b|card\s*#|exp(?:iry|\.|iration)|batch|terminal\s*id|roider|roider)\b/i.test(line) &&
+      !isTotalLine(line);
   }
 
   function collectAmounts(text) {
@@ -273,6 +258,7 @@
       var amounts = extractAmountsFromLine(line);
       if (!amounts.length) continue;
       if (isExcludedLine(line)) continue;
+      if (isIdLikeLine(line)) continue;
       var bucket = isTotalLine(line) ? labeled : unlabeled;
       for (var j = 0; j < amounts.length; j++) {
         bucket.push(Object.assign({ line: line, lineIndex: i }, amounts[j]));
@@ -282,32 +268,44 @@
   }
 
   function pickAmount(collected) {
-    function bestOf(list, confidence) {
-      if (!list.length) return null;
-      var withDec = list.filter(function (x) { return x.hasDecimals; });
-      var pool = withDec.length ? withDec : list;
-      pool = pool.slice().sort(function (a, b) { return b.amount - a.amount; });
-      var pick = pool[0];
-      return {
-        amount: pick.amount,
-        confidence: confidence,
-        currency: pick.currency,
-        line: pick.line
-      };
+    var labeled = collected.labeled || [];
+    if (!labeled.length) {
+      // Do not invent a total from unlabeled item prices.
+      return null;
     }
 
-    var labeled = bestOf(collected.labeled, 'high');
-    if (labeled) return labeled;
-    var unlabeled = bestOf(collected.unlabeled, 'medium');
-    if (unlabeled) {
-      // A single standalone money value is a bit more trustworthy than "largest of many".
-      if (collected.unlabeled.length === 1) unlabeled.confidence = 'medium';
-      else unlabeled.confidence = 'low';
-      return unlabeled;
+    var counts = {};
+    var preferredCounts = {};
+    labeled.forEach(function (x) {
+      var key = x.amount.toFixed(2);
+      counts[key] = (counts[key] || 0) + 1;
+      if (x.preferred) preferredCounts[key] = (preferredCounts[key] || 0) + 1;
+    });
+
+    var bestKey = null;
+    var bestScore = -1;
+    Object.keys(counts).forEach(function (key) {
+      var score = counts[key] * 10 + (preferredCounts[key] || 0) * 5;
+      if (score > bestScore || (score === bestScore && Number(key) < Number(bestKey))) {
+        bestScore = score;
+        bestKey = key;
+      }
+    });
+    if (!bestKey) return null;
+    var amount = Number(bestKey);
+    var line = '';
+    for (var i = 0; i < labeled.length; i++) {
+      if (labeled[i].amount.toFixed(2) === bestKey) {
+        line = labeled[i].line;
+        if (labeled[i].preferred) break;
+      }
     }
-    return null;
+    return {
+      amount: amount,
+      confidence: 'high',
+      line: line
+    };
   }
-
 
   var KNOWN_BRANDS = [
     { name: 'Starbucks', pattern: /\bstarbucks(?:\s+coffee)?\b/i },
@@ -334,7 +332,7 @@
   ];
 
   var SKIP_MERCHANT_LINE =
-    /^\s*(welcome(?:\s+to\b)?|thanks?(?:\s+you)?|thank\s+you(?:\s+for\b)?|receipt|invoice|tax\s+invoice|customer\s+copy|merchant\s+copy|duplicate|void|store\s*#|store\s+(?:no\.?|number|id)\b|tel\b|telephone|phone\b|fax\b|cashier|clerk|register|terminal|lane\b|served\s+by|you\s+were\s+served|operator|associate|employee|manager|server\b)/i;
+    /^\s*(welcome(?:\s+to\b)?|thanks?(?:\s+you)?|thank\s+you(?:\s+for\b)?|receipt|invoice|tax\s+invoice|customer\s+copy|merchant\s+copy|store\s+copy|copy\s+below|duplicate|void|store\s*#|store\s+(?:no\.?|number|id)\b|tel\b|telephone|phone\b|fax\b|cashier|clerk|register|terminal|lane\b|served\s+by|you\s+were\s+served|operator|associate|employee|manager|server\b|order\s*#|auth\b|wide\s+open)/i;
 
   function letterCount(s) {
     return (String(s).match(/[A-Za-z]/g) || []).length;
@@ -362,7 +360,7 @@
   }
 
   function isAddressLine(line) {
-    if (/\b\d{1,6}\s+(?:[A-Za-z0-9.''\-]+\s+){0,4}(?:st|street|ave|avenue|rd|road|blvd|boulevard|dr|drive|ln|lane|way|ct|court|hwy|highway|pkwy|parkway|cir|circle|pl|place|sq|square)\b\.?/i.test(line)) {
+    if (/\b\d{1,6}\s+(?:[A-Za-z0-9.''\-]+\s+){0,4}(?:st|street|ave|avenue|rd|road|blvd|boulevard|dr|drive|ln|lane|way|ct|court|hwy|highway|pkwy|parkway|cir|circle|pl|place|sq|square|school\s+road)\b\.?/i.test(line)) {
       return true;
     }
     if (/\b(?:suite|ste|apt|apartment|unit|fl|floor|bldg|building)\.?\s*[A-Za-z0-9]+\b/i.test(line)) return true;
@@ -380,7 +378,7 @@
       .replace(/\b(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{2,4})\b/g, ' ')
       .replace(new RegExp('\\b(' + month + ')\\b', 'gi'), ' ')
       .replace(/\b\d{1,2}:\d{2}(?::\d{2})?\s*(?:[ap]m)?\b/gi, ' ')
-      .replace(/\b(?:date|time|dated|txn|trans(?:action)?)\b/gi, ' ')
+      .replace(/\b(?:date|time|dated|txn|trans(?:action)?|ate)\b/gi, ' ')
       .replace(/[\s,.\-:\/#]+/g, '');
     return stripped.length < 3;
   }
@@ -396,8 +394,7 @@
     if (isAddressLine(s)) return true;
     if (isDateOrTimeLine(s)) return true;
     if (isTotalLine(s) || isExcludedLine(s)) return true;
-    // Item and total lines usually end with a price.
-    if (/(?:\$|€|£)?\s*\d{1,3}(?:[.,]\d{3})*[.,]\d{2}\s*(?:\$|€|£|[A-Z]{3})?\s*$/.test(s)) return true;
+    if (/(?:\$)?\s*\d{1,3}(?:[.,]\d{3})*[.,]\d{2}\s*(?:\$|[A-Z]{3})?\s*$/.test(s)) return true;
     return false;
   }
 
@@ -416,10 +413,7 @@
       (bare.length <= 4 && !/[AEIOU]/i.test(bare) || /^(CVS|BP|KFC|BBQ|USA|LLC|INC|IBM|UPS|BMW|AMC)$/i.test(bare));
     if (isShortAcronym) return upper;
     if (/^mc[a-z]/i.test(bare) && bare.length > 3) {
-      var rest = word.slice(word.toLowerCase().indexOf('c') + 1);
-      var lettersOnly = rest.replace(/^[^A-Za-z]+/, '');
       var idx = word.search(/c/i);
-      var prefix = word.slice(0, idx + 1);
       var after = word.slice(idx + 1);
       return 'Mc' + (after.charAt(0).toUpperCase() + after.slice(1).toLowerCase());
     }
@@ -432,11 +426,9 @@
 
   function toMerchantTitleCase(s) {
     var words = String(s).split(/\s+/);
-    var allCaps = looksAllCaps(s.replace(/[^A-Za-z]/g, '') ? s : '');
-    // Title-case ALL CAPS (or mostly caps) lines; leave already mixed names alone.
     var letters = s.replace(/[^A-Za-z]/g, '');
     var caps = (s.match(/[A-Z]/g) || []).length;
-    var shouldTitle = allCaps || (letters.length >= 2 && caps / letters.length >= 0.8);
+    var shouldTitle = looksAllCaps(s) || (letters.length >= 2 && caps / letters.length >= 0.8);
     if (!shouldTitle) return s;
     return words.map(titleCaseWord).join(' ');
   }
@@ -461,6 +453,27 @@
     return s;
   }
 
+  function isPlausibleMerchant(name) {
+    if (!name) return false;
+    var s = String(name).trim();
+    if (letterCount(s) < 3) return false;
+    var compact = s.replace(/\s/g, '');
+    if (!compact.length) return false;
+    if (letterCount(s) / compact.length < 0.7) return false;
+    var tokens = s.split(/\s+/).filter(Boolean);
+    if (!tokens.length) return false;
+    var short = tokens.filter(function (t) { return t.replace(/[^A-Za-z]/g, '').length <= 2; }).length;
+    if (short > tokens.length / 2) return false;
+    var hasWord = tokens.some(function (t) {
+      return t.replace(/[^A-Za-z]/g, '').length >= 4;
+    });
+    var isShortAcronym = tokens.length === 1 && tokens[0].length <= 4 &&
+      /^[A-Za-z0-9&]+$/.test(tokens[0]);
+    if (!hasWord && !isShortAcronym) return false;
+    if (shouldSkipMerchantLine(s) && !isShortAcronym) return false;
+    return true;
+  }
+
   function findKnownBrand(text) {
     var source = String(text || '');
     var best = null;
@@ -477,6 +490,17 @@
     return best;
   }
 
+  function findThanksMerchant(text) {
+    var re = /thanks?(?:\s+you)?\s+for\s+(?:visiting|shopping(?:\s+at)?)\s+([^!\n\r]+)/gi;
+    var m;
+    var best = '';
+    while ((m = re.exec(text || ''))) {
+      var cleaned = cleanMerchant(m[1]);
+      if (isPlausibleMerchant(cleaned) && cleaned.length > best.length) best = cleaned;
+    }
+    return best || '';
+  }
+
   function findHeuristicMerchant(text) {
     var lines = String(text || '').split(/\r?\n/);
     var seen = 0;
@@ -487,7 +511,7 @@
       if (shouldSkipMerchantLine(raw)) continue;
       if (!isMostlyLetters(raw) && letterCount(raw) < 3) continue;
       var cleaned = cleanMerchant(raw);
-      if (!cleaned || letterCount(cleaned) < 2) continue;
+      if (!isPlausibleMerchant(cleaned)) continue;
       return cleaned;
     }
     return '';
@@ -498,19 +522,15 @@
     if (brand) {
       return { merchant: brand.name, confidence: 'high' };
     }
+    var thanks = findThanksMerchant(text);
+    if (thanks) {
+      return { merchant: thanks, confidence: 'high' };
+    }
     var guessed = findHeuristicMerchant(text);
     if (guessed) {
       return { merchant: guessed, confidence: 'medium' };
     }
     return { merchant: null, confidence: 'none' };
-  }
-
-  function currencyPrefix(code) {
-    var c = (code || 'USD').toUpperCase();
-    if (c === 'USD') return '$';
-    if (c === 'EUR') return '€';
-    if (c === 'GBP') return '£';
-    return c + ' ';
   }
 
   function sanitizeFilename(name) {
@@ -520,14 +540,27 @@
       .trim();
   }
 
-  function buildFilename(dateIso, amount, currency, merchant) {
+  function cents(value) {
+    var n = Number(value);
+    if (!Number.isFinite(n)) return null;
+    // Guard floating-point noise so 10.10 and 0.1 + 0.2 stay exact cents.
+    return Math.round(n * 100 + (n >= 0 ? 1e-8 : -1e-8));
+  }
+
+  function moneySum(amount, tip) {
+    var a = cents(amount);
+    if (a == null) return null;
+    var t = cents(tip);
+    if (t == null) t = 0;
+    return (a + t) / 100;
+  }
+
+  function buildFilename(dateIso, amount, merchant) {
     var datePart = dateIso && /^\d{4}-\d{2}-\d{2}$/.test(dateIso) ? dateIso : 'undated';
     var n = Number(amount);
     var amt = Number.isFinite(n) ? n.toFixed(2) : '0.00';
-    var prefix = currencyPrefix(currency || 'USD');
-    var money = prefix.endsWith(' ') ? prefix + amt : prefix + amt;
     var merch = sanitizeFilename(merchant || '').replace(/\.+$/g, '').trim();
-    var base = merch ? merch + ' ' + datePart + ' ' + money + '.jpg' : datePart + ' ' + money + '.jpg';
+    var base = merch ? merch + ' ' + datePart + ' $' + amt + '.jpg' : datePart + ' $' + amt + '.jpg';
     return sanitizeFilename(base);
   }
 
@@ -537,6 +570,10 @@
       return { date: null, confidence: 'none', ambiguous: false };
     }
     var top = candidates[0];
+    // Do not invent a date from a weak, unlabeled, 2-digit-year guess.
+    if (top.confidence === 'low') {
+      return { date: null, confidence: 'none', ambiguous: !!top.ambiguous };
+    }
     return {
       date: top.date.iso,
       confidence: top.confidence,
@@ -549,25 +586,18 @@
     var dateInfo = parseDate(text);
     var collected = collectAmounts(text);
     var amountInfo = pickAmount(collected);
-
-    var currencyInfo = null;
-    if (amountInfo && amountInfo.currency) currencyInfo = amountInfo.currency;
-    if (!currencyInfo && amountInfo && amountInfo.line) currencyInfo = detectCurrencyIn(amountInfo.line);
-    if (!currencyInfo) currencyInfo = detectCurrencyIn(text);
-    if (!currencyInfo) currencyInfo = { code: 'USD', confidence: 'low' };
-
     var amount = amountInfo ? amountInfo.amount : null;
     var merchantInfo = parseMerchant(text);
-    var filename = buildFilename(dateInfo.date, amount, currencyInfo.code, merchantInfo.merchant);
+    var filename = buildFilename(dateInfo.date, amount, merchantInfo.merchant);
 
     return {
       date: dateInfo.date,
       amount: amount,
-      currency: currencyInfo.code,
+      currency: 'USD',
       merchant: merchantInfo.merchant,
       dateConfidence: dateInfo.confidence,
       amountConfidence: amountInfo ? amountInfo.confidence : 'none',
-      currencyConfidence: currencyInfo.confidence,
+      currencyConfidence: 'high',
       merchantConfidence: merchantInfo.confidence,
       filename: filename
     };
@@ -578,10 +608,10 @@
     parseDate: parseDate,
     parseMerchant: parseMerchant,
     parseNumericAmount: parseNumericAmount,
-    detectCurrencyIn: detectCurrencyIn,
     buildFilename: buildFilename,
+    moneySum: moneySum,
     cleanMerchant: cleanMerchant,
-    sanitizeFilename: sanitizeFilename,
-    currencyPrefix: currencyPrefix
+    isPlausibleMerchant: isPlausibleMerchant,
+    sanitizeFilename: sanitizeFilename
   };
 });
