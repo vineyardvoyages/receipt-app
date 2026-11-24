@@ -3,7 +3,7 @@
  * Google API / sign-in requests are never cached.
  * Tesseract CDN files may be cached at runtime after the first fetch.
  */
-const CACHE_NAME = 'receipts-shell-v5';
+const CACHE_NAME = 'receipts-shell-v6';
 
 const APP_SHELL = [
   './',
@@ -119,11 +119,15 @@ self.addEventListener('fetch', (event) => {
   }
 
   if (url.origin === self.location.origin) {
-    event.respondWith(cacheFirst(request));
+    event.respondWith(networkFirst(request));
     return;
   }
 
   if (isRuntimeCdn(url)) {
     event.respondWith(cacheFirst(request));
   }
+});
+
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'SKIP_WAITING') self.skipWaiting();
 });

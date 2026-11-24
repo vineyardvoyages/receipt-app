@@ -90,12 +90,9 @@
       </div>
       <div class="save-actions">
         <button type="button" class="btn btn-primary" id="save-drive-btn">Save to Drive</button>
-        <p id="drive-note" class="note hidden">Upload is not configured yet. You can still download or share the photo.</p>
-        <div class="secondary-links">
-          <button type="button" class="link-btn" id="share-btn">Share</button>
-          <button type="button" class="link-btn" id="download-btn">Download</button>
-        </div>
+        <p id="drive-note" class="note hidden">Upload is not configured yet.</p>
         <p id="confirm-status" class="status-line hidden" role="status"></p>
+        <button type="button" class="btn btn-secondary hidden" id="retry-btn">Retry upload</button>
         <button type="button" class="btn btn-ghost" id="confirm-back">Back</button>
       </div>
     </div>
@@ -116,6 +113,12 @@
       </div>
     </div>
   </section>
+
+  <div id="toast" class="toast hidden" role="status" aria-live="assertive">
+    <span id="toast-text"></span>
+    <a id="toast-link" class="toast-link hidden" href="#" target="_blank" rel="noopener">Open</a>
+  </div>
+  <footer class="app-version" id="app-version"></footer>
 
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
   <script src="config.js"></script>

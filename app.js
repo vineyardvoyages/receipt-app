@@ -1,6 +1,7 @@
 (function () {
   'use strict';
 
+  var APP_VERSION = 'v6 · 2026-11-23';
   var RECENT_KEY = 'receipts.recent.v1';
   var RECENT_LIMIT = 20;
   var SAVE_MAX_EDGE = 1600;
@@ -11,6 +12,9 @@
     /\b(TOTAL|SUBTOTAL|AMOUNT|CHARGED|DATE|TIME|CARD|CREDIT|PURCHASE|TAX|TIP|AUTH|APPROVED|RECEIPT|STORE|THANKS|VISITING|INVOICE|BALANCE|SIGNATURE|MERCHANT|PAYMENT|ORDER|SALE)\b/gi;
 
   var cancelled = false;
+  var saving = false;
+  var toastTimer = null;
+  var pendingQueueId = null;
   var ocrWorker = null;
   var ocrBusy = false;
 
@@ -42,8 +46,37 @@
       return;
     }
     node.textContent = message;
+    node.classList.remove('err-box');
     node.classList.toggle('ok', !!ok);
     show(node);
+  }
+
+  function showToast(message, kind, linkUrl, ms) {
+    if (!els.toast) return;
+    if (toastTimer) clearTimeout(toastTimer);
+    els.toastText.textContent = message;
+    els.toast.classList.remove('ok', 'err');
+    els.toast.classList.add(kind === 'ok' ? 'ok' : 'err');
+    if (linkUrl) {
+      els.toastLink.href = linkUrl;
+      show(els.toastLink);
+    } else {
+      els.toastLink.removeAttribute('href');
+      hide(els.toastLink);
+    }
+    show(els.toast);
+    toastTimer = setTimeout(function () { hide(els.toast); }, ms || 7000);
+  }
+
+  function setSaving(on) {
+    saving = on;
+    els.saveDriveBtn.disabled = on;
+    if (els.retryBtn) els.retryBtn.disabled = on;
+    if (on) {
+      els.saveDriveBtn.innerHTML = '<span class="spinner" aria-hidden="true"></span>Saving…';
+    } else {
+      els.saveDriveBtn.textContent = 'Save to Drive';
+    }
   }
 
   function loadRecent() {
@@ -118,7 +151,9 @@
       var sub = document.createElement('div');
       sub.className = 'recent-sub';
       var parts = [];
-      if (item.savedTo) parts.push(item.savedTo);
+      if (item.savedTo === 'Saved to Drive') parts.push('✓ Saved');
+      else if (item.savedTo === 'Waiting to upload') parts.push('⏳ Waiting to upload');
+      else if (item.savedTo) parts.push(item.savedTo);
       if (item.timestamp) parts.push(formatSavedWhen(item.timestamp));
       sub.textContent = parts.join(' · ');
       meta.appendChild(name);
@@ -539,6 +574,8 @@
   }
 
   function fillConfirm(parsed) {
+    pendingQueueId = null;
+    if (els.retryBtn) hide(els.retryBtn);
     state.parsed = parsed;
     els.inputMerchant.value = parsed.merchant || '';
     els.inputDate.value = parsed.date || '';
@@ -587,13 +624,6 @@
 
   function configureSaveButtons() {
     renderDriveStatus();
-    var canShare = typeof navigator.share === 'function';
-    els.shareBtn.classList.toggle('hidden', !canShare);
-  }
-
-  function namedFile() {
-    var filename = currentFilename();
-    return new File([state.blob], filename, { type: 'image/jpeg', lastModified: Date.now() });
   }
 
   function requireValues() {
@@ -642,8 +672,7 @@
     var where =
       savedTo === 'Saved to Drive' ? 'Saved to ' + path :
       savedTo === 'Waiting to upload' ? 'Saved on this device and waiting to upload to ' + path + ' when you are back online.' :
-      savedTo === 'Shared' ? 'Shared with the filename above.' :
-      'Downloaded with the filename above.';
+      'Saved on this device.';
     els.doneMessage.textContent = where;
     if (els.doneLinkWrap) {
       if (savedTo === 'Saved to Drive' && extra.fileUrl) {
@@ -658,40 +687,103 @@
     showScreen('done');
   }
 
+  function uploadFailedMessage(err) {
+    var reason = err && err.message ? err.message : 'Unknown error';
+    if (/failed to fetch|networkerror|load failed/i.test(reason)) reason = 'No connection to Google Drive';
+    return reason;
+  }
+
   async function onSaveDrive() {
+    if (saving) return;
     if (!requireValues()) return;
     if (!ReceiptDrive.isConfigured()) {
-      setStatus(els.confirmStatus, 'Upload is not configured yet. You can still download or share the photo.', false);
+      setStatus(els.confirmStatus, 'Upload is not configured yet.', false);
       return;
     }
-    els.saveDriveBtn.disabled = true;
+    setSaving(true);
+    hide(els.retryBtn);
+    setStatus(els.confirmStatus, '', false);
+    var filename = currentFilename();
     try {
-      setStatus(els.confirmStatus, 'Uploading to Google Drive…', true);
-      var result = await ReceiptDrive.saveReceipt(currentFilename(), state.blob);
+      var result = await ReceiptDrive.saveReceipt(filename, state.blob);
+      showToast('Saved to Drive ✓ ' + (result.name || filename), 'ok', result.url, 8000);
       await recordAndFinish('Saved to Drive', { fileUrl: result && result.url });
     } catch (err) {
+      var reason = uploadFailedMessage(err);
       var Queue = window.ReceiptQueue;
-      var online = typeof navigator === 'undefined' || navigator.onLine !== false;
-      if (Queue && Queue.isOfflineError && Queue.isOfflineError(err, online)) {
-        try {
-          var queueId = await Queue.enqueue({
-            filename: currentFilename(),
-            blob: state.blob,
-            merchant: (els.inputMerchant.value || '').trim(),
-            date: els.inputDate.value,
-            amount: Number(els.inputAmount.value),
-            tip: tipValue() || undefined,
-            total: chargedTotal()
-          });
-          await recordAndFinish('Waiting to upload', { queueId: queueId });
-        } catch (queueErr) {
-          setStatus(els.confirmStatus, 'Offline, and the upload could not be queued: ' + (queueErr.message || queueErr), false);
-        }
-      } else {
-        setStatus(els.confirmStatus, err && err.message ? err.message : 'Upload failed. You can still download or share the photo.', false);
+      try {
+        if (!Queue) throw new Error('queue unavailable');
+        pendingQueueId = await Queue.enqueue({
+          filename: filename,
+          blob: state.blob,
+          merchant: (els.inputMerchant.value || '').trim(),
+          date: els.inputDate.value,
+          amount: Number(els.inputAmount.value),
+          tip: tipValue() || undefined,
+          total: chargedTotal()
+        });
+        await addQueuedRecent(filename, pendingQueueId);
+        setStatus(els.confirmStatus, 'Upload failed: ' + reason + '. Saved on this phone and queued; it will retry automatically, or tap Retry.', false);
+        els.confirmStatus.classList.add('err-box');
+        showToast('Upload failed: ' + reason + ' — queued for retry', 'err', null, 8000);
+        show(els.retryBtn);
+      } catch (queueErr) {
+        setStatus(els.confirmStatus, 'Upload failed: ' + reason + '. Tap Save to Drive to try again.', false);
+        els.confirmStatus.classList.add('err-box');
+        showToast('Upload failed: ' + reason, 'err', null, 8000);
       }
+      els.confirmStatus.scrollIntoView({ behavior: 'smooth', block: 'center' });
     } finally {
-      els.saveDriveBtn.disabled = false;
+      setSaving(false);
+    }
+  }
+
+  async function addQueuedRecent(filename, queueId) {
+    var thumbnail = await makeThumbnail(state.blob);
+    addRecent({
+      filename: filename,
+      merchant: (els.inputMerchant.value || '').trim() || undefined,
+      date: els.inputDate.value,
+      amount: Number(els.inputAmount.value),
+      tip: tipValue() || undefined,
+      total: chargedTotal(),
+      currency: 'USD',
+      savedTo: 'Waiting to upload',
+      folderPath: folderLabel(),
+      queueId: queueId,
+      timestamp: Date.now(),
+      thumbnail: thumbnail || undefined
+    });
+  }
+
+  async function onRetry() {
+    if (saving || !pendingQueueId) return;
+    setSaving(true);
+    var id = pendingQueueId;
+    try {
+      var result = await ReceiptDrive.flushQueue();
+      var okIds = (result && result.uploadedIds) || [];
+      okIds.forEach(markRecentUploaded);
+      if (okIds.indexOf(id) !== -1) {
+        pendingQueueId = null;
+        hide(els.retryBtn);
+        var filename = currentFilename();
+        showToast('Saved to Drive ✓ ' + filename, 'ok', null, 8000);
+        els.doneFilename.textContent = filename;
+        els.doneMessage.textContent = 'Saved to ' + folderLabel();
+        hide(els.doneLinkWrap);
+        showScreen('done');
+      } else {
+        var f = result && result.failed && result.failed[0];
+        var reason = uploadFailedMessage(f && f.error ? { message: String(f.error) } : null);
+        setStatus(els.confirmStatus, 'Still not uploaded: ' + reason + '. It stays queued and will retry automatically.', false);
+        els.confirmStatus.classList.add('err-box');
+        showToast('Retry failed: ' + reason, 'err', null, 7000);
+      }
+    } catch (err) {
+      showToast('Retry failed: ' + uploadFailedMessage(err), 'err', null, 7000);
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -699,46 +791,13 @@
     if (!ReceiptDrive.isConfigured || !ReceiptDrive.isConfigured()) return;
     try {
       var result = await ReceiptDrive.flushQueue();
-      if (result && result.uploadedIds) {
+      if (result && result.uploadedIds && result.uploadedIds.length) {
         result.uploadedIds.forEach(markRecentUploaded);
+        showToast('Uploaded ' + result.uploadedIds.length + ' queued receipt(s) ✓', 'ok', null, 6000);
       }
     } catch (err) {
       /* retry next time the app opens or comes online */
     }
-  }
-
-  async function onShare() {
-    if (!requireValues()) return;
-    var file = namedFile();
-    if (typeof navigator.canShare === 'function' && !navigator.canShare({ files: [file] })) {
-      setStatus(els.confirmStatus, 'Sharing files is not supported in this browser. Use Download instead.', false);
-      return;
-    }
-    try {
-      await navigator.share({
-        files: [file],
-        title: file.name,
-        text: file.name
-      });
-      await recordAndFinish('Shared');
-    } catch (err) {
-      if (err && (err.name === 'AbortError' || /cancel/i.test(err.message || ''))) return;
-      setStatus(els.confirmStatus, err && err.message ? err.message : 'Share failed.', false);
-    }
-  }
-
-  async function onDownload() {
-    if (!requireValues()) return;
-    var file = namedFile();
-    var url = URL.createObjectURL(file);
-    var a = document.createElement('a');
-    a.href = url;
-    a.download = file.name;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(function () { URL.revokeObjectURL(url); }, 2000);
-    await recordAndFinish('Downloaded');
   }
 
   function prettyOcrStatus(status) {
@@ -898,8 +957,28 @@
 
   function registerServiceWorker() {
     if (!('serviceWorker' in navigator)) return;
+    var hadController = !!navigator.serviceWorker.controller;
+    var reloading = false;
+    navigator.serviceWorker.addEventListener('controllerchange', function () {
+      if (!hadController || reloading || saving) return;
+      reloading = true;
+      window.location.reload();
+    });
     var start = function () {
-      navigator.serviceWorker.register('./sw.js', { scope: './' }).catch(function (err) {
+      navigator.serviceWorker.register('./sw.js', { scope: './', updateViaCache: 'none' }).then(function (reg) {
+        if (reg.waiting) reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+        reg.addEventListener('updatefound', function () {
+          var sw = reg.installing;
+          if (!sw) return;
+          sw.addEventListener('statechange', function () {
+            if (sw.state === 'installed' && navigator.serviceWorker.controller) sw.postMessage({ type: 'SKIP_WAITING' });
+          });
+        });
+        reg.update().catch(function () {});
+        document.addEventListener('visibilitychange', function () {
+          if (document.visibilityState === 'visible') reg.update().catch(function () {});
+        });
+      }).catch(function (err) {
         console.warn('Service worker registration failed:', err);
       });
     };
@@ -942,8 +1021,11 @@
     els.driveStatusText = $('drive-status-text');
     els.saveDriveBtn = $('save-drive-btn');
     els.driveNote = $('drive-note');
-    els.shareBtn = $('share-btn');
-    els.downloadBtn = $('download-btn');
+    els.retryBtn = $('retry-btn');
+    els.toast = $('toast');
+    els.toastText = $('toast-text');
+    els.toastLink = $('toast-link');
+    els.appVersion = $('app-version');
     els.confirmStatus = $('confirm-status');
     els.confirmBack = $('confirm-back');
     els.doneMessage = $('done-message');
@@ -972,8 +1054,8 @@
 
     els.rotateBtn.addEventListener('click', function () { onRotate(); });
     els.saveDriveBtn.addEventListener('click', function () { onSaveDrive(); });
-    els.shareBtn.addEventListener('click', function () { onShare(); });
-    els.downloadBtn.addEventListener('click', function () { onDownload(); });
+    els.retryBtn.addEventListener('click', function () { onRetry(); });
+    if (els.appVersion) els.appVersion.textContent = 'Receipts ' + APP_VERSION;
     els.confirmBack.addEventListener('click', function () {
       revokePreview();
       state.blob = null;

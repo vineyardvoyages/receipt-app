@@ -1,6 +1,6 @@
 # Receipts
 
-A mobile-first Progressive Web App that photographs a receipt, reads the merchant, transaction date, and printed total, names the image, and saves it automatically to **Vineyard Voyages / Receipts** in Google Drive. You can also share or download the correctly named photo.
+A mobile-first Progressive Web App that photographs a receipt, reads the merchant, transaction date, and printed total, names the image, and saves it automatically to **Vineyard Voyages / Receipts** in Google Drive.
 
 The app is static (plain HTML, CSS, and JavaScript). There is no build step. Serve the folder as-is, including from a GitHub Pages project site such as `https://USER.github.io/receipt-app/`. All paths are relative so a subpath deploy works.
 
@@ -36,7 +36,9 @@ node test/parse.test.js
 
 Saving does not ask anyone to sign in or pick a folder. **Save to Drive** posts the JPEG to a Google Apps Script web app owned by **choeffel@gmail.com**. That script writes the file into **Vineyard Voyages / Receipts** and returns a link. If you are offline, the photo is queued on the device and uploads the next time the app is open and online.
 
-Share and Download remain available as smaller links on the confirm screen if the upload fails or the endpoint is not configured yet.
+Save to Drive is the only save action. While uploading, the button shows **Saving…** with a spinner. On success a green banner shows **Saved to Drive ✓ filename** with an Open link, and the receipt shows ✓ in Recent receipts. If an upload fails, a red message gives the reason, the photo is queued on the device, and a **Retry upload** button appears. Queued uploads also retry automatically when the app opens or comes back online.
+
+The footer shows the app version (for example `Receipts v6 · 2026-11-23`), so you can confirm the phone is running the latest code. New versions activate automatically and reload the page.
 
 ### Deploy the upload script (owner)
 
