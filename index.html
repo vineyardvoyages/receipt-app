@@ -28,6 +28,12 @@
         <button type="button" class="btn btn-primary" id="camera-btn">Photograph receipt</button>
         <button type="button" class="btn btn-secondary" id="gallery-btn">Choose from gallery</button>
       </section>
+      <section class="drive-status" id="drive-status">
+        <p id="drive-status-text" class="note">Save receipts to Google Drive.</p>
+        <button type="button" class="btn btn-secondary" id="drive-connect-btn">Connect Google Drive</button>
+        <button type="button" class="link-btn hidden" id="drive-change-btn">Change folder</button>
+        <p id="drive-home-status" class="status-line hidden" role="status"></p>
+      </section>
       <section class="recent">
         <h2>Recent receipts</h2>
         <p id="recent-empty" class="empty">No receipts yet</p>
@@ -86,10 +92,12 @@
         <code id="filename-live"></code>
       </div>
       <div class="save-actions">
-        <button type="button" class="btn btn-primary" id="save-drive-btn">Save to Google Drive</button>
-        <p id="drive-note" class="note hidden">Add a Google Client ID in config.js to enable Drive uploads.</p>
-        <button type="button" class="btn btn-secondary" id="share-btn">Share</button>
-        <button type="button" class="btn btn-secondary" id="download-btn">Download</button>
+        <button type="button" class="btn btn-primary" id="save-drive-btn">Save to Drive</button>
+        <p id="drive-note" class="note hidden">Connect Google Drive to save receipts automatically.</p>
+        <div class="secondary-links">
+          <button type="button" class="link-btn" id="share-btn">Share</button>
+          <button type="button" class="link-btn" id="download-btn">Download</button>
+        </div>
         <p id="confirm-status" class="status-line hidden" role="status"></p>
         <button type="button" class="btn btn-ghost" id="confirm-back">Back</button>
       </div>
@@ -113,8 +121,10 @@
 
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
   <script src="https://accounts.google.com/gsi/client" async defer></script>
+  <script src="https://apis.google.com/js/api.js" async defer></script>
   <script src="config.js"></script>
   <script src="parse.js"></script>
+  <script src="queue.js"></script>
   <script src="drive.js"></script>
   <script src="app.js"></script>
 </body>

@@ -422,3 +422,45 @@ main {
   display: flex;
   align-items: center;
 }
+
+.drive-status {
+  margin: 0 0 24px;
+  text-align: center;
+}
+
+.drive-status .note {
+  margin: 0 0 8px;
+}
+
+.drive-status #drive-connect-btn {
+  margin-top: 4px;
+}
+
+.drive-status #drive-change-btn {
+  margin-top: 0;
+}
+
+.link-btn {
+  appearance: none;
+  background: none;
+  border: 0;
+  padding: 8px 6px;
+  min-height: 44px;
+  color: var(--accent);
+  font-weight: 650;
+  font-size: 0.95rem;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.link-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.secondary-links {
+  display: flex;
+  justify-content: center;
+  gap: 18px;
+  margin: 2px 0 0;
+}

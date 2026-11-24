@@ -137,6 +137,23 @@
     renderRecent();
   }
 
+  function markRecentUploaded(queueId) {
+    if (!queueId) return;
+    var list = loadRecent();
+    var changed = false;
+    list.forEach(function (item) {
+      if (item.queueId === queueId) {
+        item.savedTo = 'Saved to Drive';
+        delete item.queueId;
+        changed = true;
+      }
+    });
+    if (changed) {
+      saveRecent(list);
+      renderRecent();
+    }
+  }
+
   function revokePreview() {
     if (state.previewUrl) {
       URL.revokeObjectURL(state.previewUrl);
@@ -551,10 +568,38 @@
     configureSaveButtons();
   }
 
+  function folderLabel() {
+    var folder = ReceiptDrive.getStoredFolder && ReceiptDrive.getStoredFolder();
+    return ReceiptDrive.folderPath(folder) || 'Vineyard Voyages / Receipts';
+  }
+
+  function renderDriveStatus() {
+    if (!els.driveStatusText) return;
+    var configured = ReceiptDrive.isConfigured();
+    var folder = ReceiptDrive.getStoredFolder && ReceiptDrive.getStoredFolder();
+    if (!configured) {
+      els.driveStatusText.textContent = 'Add Google Drive credentials in config.js to enable saving.';
+      hide(els.driveConnectBtn);
+      hide(els.driveChangeBtn);
+      show(els.driveNote);
+      hide(els.saveDriveBtn);
+      return;
+    }
+    hide(els.driveNote);
+    show(els.saveDriveBtn);
+    if (folder && folder.receiptsFolderId) {
+      els.driveStatusText.textContent = 'Saving to: ' + folderLabel();
+      hide(els.driveConnectBtn);
+      show(els.driveChangeBtn);
+    } else {
+      els.driveStatusText.textContent = 'Connect Google Drive once to choose the Receipts folder.';
+      show(els.driveConnectBtn);
+      hide(els.driveChangeBtn);
+    }
+  }
+
   function configureSaveButtons() {
-    var driveReady = ReceiptDrive.isConfigured();
-    els.saveDriveBtn.classList.toggle('hidden', !driveReady);
-    els.driveNote.classList.toggle('hidden', driveReady);
+    renderDriveStatus();
     var canShare = typeof navigator.share === 'function';
     els.shareBtn.classList.toggle('hidden', !canShare);
   }
@@ -586,7 +631,8 @@
     return true;
   }
 
-  async function recordAndFinish(savedTo) {
+  async function recordAndFinish(savedTo, extra) {
+    extra = extra || {};
     var filename = currentFilename();
     var thumbnail = await makeThumbnail(state.blob);
     var tip = tipValue();
@@ -599,33 +645,102 @@
       total: chargedTotal(),
       currency: 'USD',
       savedTo: savedTo,
+      folderPath: extra.folderPath || folderLabel(),
+      queueId: extra.queueId,
       timestamp: Date.now(),
       thumbnail: thumbnail || undefined
     });
     els.doneFilename.textContent = filename;
+    var path = extra.folderPath || folderLabel();
     var where =
-      savedTo === 'Google Drive' ? 'Saved to the Google Drive folder “Receipts”.' :
-      savedTo === 'Shared' ? 'Shared with the filename above. Choose Google Drive if you want it in the Receipts folder.' :
-      'Downloaded with the filename above. You can move it into a Google Drive folder named Receipts.';
+      savedTo === 'Saved to Drive' ? 'Saved to ' + path + '.' :
+      savedTo === 'Waiting to upload' ? 'Saved on this device and waiting to upload to ' + path + ' when you are back online.' :
+      savedTo === 'Shared' ? 'Shared with the filename above.' :
+      'Downloaded with the filename above.';
     els.doneMessage.textContent = where;
     showScreen('done');
+  }
+
+  function setHomeDriveError(message) {
+    if (!els.driveHomeStatus) return;
+    setStatus(els.driveHomeStatus, message || '', false);
+  }
+
+  async function onConnectDrive() {
+    if (!ReceiptDrive.isConfigured()) {
+      setHomeDriveError('Google Drive is not configured.');
+      return;
+    }
+    els.driveConnectBtn.disabled = true;
+    if (els.driveChangeBtn) els.driveChangeBtn.disabled = true;
+    setHomeDriveError('');
+    setStatus(els.driveHomeStatus, 'Opening Google Drive…', true);
+    try {
+      await ReceiptDrive.connectFolder();
+      setStatus(els.driveHomeStatus, '', false);
+      renderDriveStatus();
+    } catch (err) {
+      setHomeDriveError(err && err.message ? err.message : 'Could not connect Google Drive.');
+    } finally {
+      els.driveConnectBtn.disabled = false;
+      if (els.driveChangeBtn) els.driveChangeBtn.disabled = false;
+    }
   }
 
   async function onSaveDrive() {
     if (!requireValues()) return;
     if (!ReceiptDrive.isConfigured()) {
-      setStatus(els.confirmStatus, 'Add a Google Client ID in config.js to enable Drive uploads.', false);
+      setStatus(els.confirmStatus, 'Google Drive is not configured in config.js.', false);
       return;
     }
     els.saveDriveBtn.disabled = true;
-    setStatus(els.confirmStatus, 'Uploading to Google Drive…', true);
     try {
+      if (!ReceiptDrive.hasFolder()) {
+        setStatus(els.confirmStatus, 'Connect Google Drive and pick the folder…', true);
+        await ReceiptDrive.connectFolder();
+        renderDriveStatus();
+      }
+      setStatus(els.confirmStatus, 'Uploading to Google Drive…', true);
       await ReceiptDrive.saveReceipt(currentFilename(), state.blob);
-      await recordAndFinish('Google Drive');
+      await recordAndFinish('Saved to Drive');
     } catch (err) {
-      setStatus(els.confirmStatus, err && err.message ? err.message : 'Upload failed.', false);
+      var Queue = window.ReceiptQueue;
+      var online = typeof navigator === 'undefined' || navigator.onLine !== false;
+      if (Queue && Queue.isOfflineError && Queue.isOfflineError(err, online)) {
+        try {
+          var queueId = await Queue.enqueue({
+            filename: currentFilename(),
+            blob: state.blob,
+            merchant: (els.inputMerchant.value || '').trim(),
+            date: els.inputDate.value,
+            amount: Number(els.inputAmount.value),
+            tip: tipValue() || undefined,
+            total: chargedTotal()
+          });
+          await recordAndFinish('Waiting to upload', { queueId: queueId });
+        } catch (queueErr) {
+          setStatus(els.confirmStatus, 'Offline, and the upload could not be queued: ' + (queueErr.message || queueErr), false);
+        }
+      } else {
+        setStatus(els.confirmStatus, err && err.message ? err.message : 'Upload failed.', false);
+        if (/no longer accessible|pick it again/i.test(err && err.message ? err.message : '')) {
+          renderDriveStatus();
+        }
+      }
     } finally {
       els.saveDriveBtn.disabled = false;
+    }
+  }
+
+  async function flushUploads() {
+    if (!ReceiptDrive.hasFolder || !ReceiptDrive.hasFolder()) return;
+    try {
+      var result = await ReceiptDrive.flushQueue();
+      if (result && result.uploadedIds) {
+        result.uploadedIds.forEach(markRecentUploaded);
+      }
+    } catch (err) {
+      /* retry next time the app opens or comes online */
     }
   }
 
@@ -861,6 +976,10 @@
     els.hintAmount = $('hint-amount');
     els.hintTip = $('hint-tip');
     els.filenameLive = $('filename-live');
+    els.driveStatusText = $('drive-status-text');
+    els.driveConnectBtn = $('drive-connect-btn');
+    els.driveChangeBtn = $('drive-change-btn');
+    els.driveHomeStatus = $('drive-home-status');
     els.saveDriveBtn = $('save-drive-btn');
     els.driveNote = $('drive-note');
     els.shareBtn = $('share-btn');
@@ -890,6 +1009,8 @@
     });
 
     els.rotateBtn.addEventListener('click', function () { onRotate(); });
+    els.driveConnectBtn.addEventListener('click', function () { onConnectDrive(); });
+    els.driveChangeBtn.addEventListener('click', function () { onConnectDrive(); });
     els.saveDriveBtn.addEventListener('click', function () { onSaveDrive(); });
     els.shareBtn.addEventListener('click', function () { onShare(); });
     els.downloadBtn.addEventListener('click', function () { onDownload(); });
@@ -909,6 +1030,8 @@
 
     configureSaveButtons();
     renderRecent();
+    flushUploads();
+    window.addEventListener('online', function () { flushUploads(); });
   }
 
   registerServiceWorker();

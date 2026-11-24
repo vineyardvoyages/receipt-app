@@ -1,12 +1,12 @@
 # Receipts
 
-A mobile-first Progressive Web App that photographs a receipt, reads the merchant, transaction date, and printed total, names the image, and saves it to a Google Drive folder called **Receipts**. You can also share or download the correctly named photo if Drive is not set up.
+A mobile-first Progressive Web App that photographs a receipt, reads the merchant, transaction date, and printed total, names the image, and saves it automatically to **Vineyard Voyages / Receipts** in Google Drive. You can also share or download the correctly named photo.
 
 The app is static (plain HTML, CSS, and JavaScript). There is no build step. Serve the folder as-is, including from a GitHub Pages project site such as `https://USER.github.io/receipt-app/`. All paths are relative so a subpath deploy works.
 
 ## Filename and folder
 
-- **Drive folder name:** `Receipts` (created automatically if this app has not created it yet)
+- **Drive folder:** `Vineyard Voyages` / `Receipts` (you pick the parent or the Receipts folder once; Receipts is created if it does not exist yet)
 - **Filename format:** `Merchant YYYY-MM-DD $225.00.jpg` (for example `Fabbioli Cellars 2026-11-21 $270.00.jpg`)
   - Amounts are always US dollars and always use `$`
   - If you enter a tip, the amount in the filename is the printed total plus the tip
@@ -31,6 +31,18 @@ Parser unit tests (Node, no extra packages):
 node test/parse.test.js
 ```
 
+
+## Google Drive
+
+The first time you save (or if you tap **Connect Google Drive**):
+
+1. Sign in as **choeffel@gmail.com** when Google asks. The consent screen may say the app is unverified — tap **Continue**.
+2. In the folder picker, open **Vineyard Voyages** and select **Receipts** if it already exists. If it does not, select **Vineyard Voyages** and the app will create a **Receipts** folder inside it.
+3. After that, the home screen shows **Saving to: Vineyard Voyages / Receipts**. Use **Change folder** if you ever need to pick a different location.
+4. On the confirm screen, tap **Save to Drive**. The photo uploads in one step. If you are offline, it is queued and uploads the next time the app is open and online.
+
+Share and Download remain available as smaller links on the confirm screen.
+
 ## Install on Android (Chrome)
 
 1. Open the hosted app URL in Chrome on your phone.
@@ -40,37 +52,6 @@ node test/parse.test.js
 
 If you do not see **Install app**, use **Add to Home screen**. The site must be served over HTTPS (GitHub Pages is fine) and you should stay on the page for a moment so the service worker can register.
 
-## Set the Google Client ID (Drive uploads)
-
-Drive upload is optional. If `GOOGLE_CLIENT_ID` in `config.js` is empty, the Drive button is hidden and you can still **Share** (on Android, pick Google Drive and the Receipts folder) or **Download** the named JPEG.
-
-To enable **Save to Google Drive**:
-
-1. Open [Google Cloud Console](https://console.cloud.google.com/) and create a project (or pick an existing one).
-2. Enable the **Google Drive API** for that project (APIs & Services → Library → Google Drive API → Enable).
-3. Configure the **OAuth consent screen**:
-   - User type: **External**
-   - Publishing status can stay **Testing**
-   - Add your Gmail address as a **test user** (required while the app is in testing)
-   - Scopes: you can keep the defaults in the consent screen UI; the app requests `https://www.googleapis.com/auth/drive.file` at sign-in time (it can only see files it created)
-4. Create an **OAuth client ID**:
-   - Application type: **Web application**
-   - **Authorized JavaScript origins** must include the exact origin of the site, with no path. Examples:
-     - `https://USER.github.io`
-     - `http://localhost:8080` (for local testing)
-   - You do not need a redirect URI for this app’s token client.
-5. Copy the client ID into `config.js`:
-
-```js
-const GOOGLE_CLIENT_ID = 'YOUR_CLIENT_ID.apps.googleusercontent.com';
-```
-
-6. Redeploy or refresh the site. The first Drive save will prompt you to sign in and allow access.
-
-Notes:
-
-- The `drive.file` scope cannot see a Receipts folder you created yourself in Drive. The app finds a Receipts folder **it** created, or creates one.
-- Authorized origins are origins only (`https://USER.github.io`), not `https://USER.github.io/receipt-app/`.
 
 ## Deploy to GitHub Pages (optional)
 
