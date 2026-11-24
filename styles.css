@@ -432,14 +432,6 @@ main {
   margin: 0 0 8px;
 }
 
-.drive-status #drive-connect-btn {
-  margin-top: 4px;
-}
-
-.drive-status #drive-change-btn {
-  margin-top: 0;
-}
-
 .link-btn {
   appearance: none;
   background: none;
@@ -463,4 +455,12 @@ main {
   justify-content: center;
   gap: 18px;
   margin: 2px 0 0;
+}
+
+.drive-open-link {
+  display: inline-block;
+  margin: 4px 0 16px;
+  color: var(--accent);
+  font-weight: 650;
+  text-underline-offset: 3px;
 }

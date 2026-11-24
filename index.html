@@ -29,10 +29,7 @@
         <button type="button" class="btn btn-secondary" id="gallery-btn">Choose from gallery</button>
       </section>
       <section class="drive-status" id="drive-status">
-        <p id="drive-status-text" class="note">Save receipts to Google Drive.</p>
-        <button type="button" class="btn btn-secondary" id="drive-connect-btn">Connect Google Drive</button>
-        <button type="button" class="link-btn hidden" id="drive-change-btn">Change folder</button>
-        <p id="drive-home-status" class="status-line hidden" role="status"></p>
+        <p id="drive-status-text" class="note">Saving to: Vineyard Voyages / Receipts</p>
       </section>
       <section class="recent">
         <h2>Recent receipts</h2>
@@ -93,7 +90,7 @@
       </div>
       <div class="save-actions">
         <button type="button" class="btn btn-primary" id="save-drive-btn">Save to Drive</button>
-        <p id="drive-note" class="note hidden">Connect Google Drive to save receipts automatically.</p>
+        <p id="drive-note" class="note hidden">Upload is not configured yet. You can still download or share the photo.</p>
         <div class="secondary-links">
           <button type="button" class="link-btn" id="share-btn">Share</button>
           <button type="button" class="link-btn" id="download-btn">Download</button>
@@ -109,6 +106,7 @@
       <div class="done-mark" aria-hidden="true">✓</div>
       <h2>Saved</h2>
       <p class="note" id="done-message"></p>
+      <p id="done-link-wrap" class="hidden"><a id="done-link" class="drive-open-link" href="#" target="_blank" rel="noopener">Open in Google Drive</a></p>
       <div class="filename-preview">
         <span class="label">Filename</span>
         <code id="done-filename"></code>
@@ -120,8 +118,6 @@
   </section>
 
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
-  <script src="https://accounts.google.com/gsi/client" async defer></script>
-  <script src="https://apis.google.com/js/api.js" async defer></script>
   <script src="config.js"></script>
   <script src="parse.js"></script>
   <script src="queue.js"></script>

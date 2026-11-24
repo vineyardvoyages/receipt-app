@@ -569,32 +569,19 @@
   }
 
   function folderLabel() {
-    var folder = ReceiptDrive.getStoredFolder && ReceiptDrive.getStoredFolder();
-    return ReceiptDrive.folderPath(folder) || 'Vineyard Voyages / Receipts';
+    return (ReceiptDrive && ReceiptDrive.folderPath && ReceiptDrive.folderPath()) || 'Vineyard Voyages / Receipts';
   }
 
   function renderDriveStatus() {
     if (!els.driveStatusText) return;
+    els.driveStatusText.textContent = 'Saving to: ' + folderLabel();
     var configured = ReceiptDrive.isConfigured();
-    var folder = ReceiptDrive.getStoredFolder && ReceiptDrive.getStoredFolder();
-    if (!configured) {
-      els.driveStatusText.textContent = 'Add Google Drive credentials in config.js to enable saving.';
-      hide(els.driveConnectBtn);
-      hide(els.driveChangeBtn);
-      show(els.driveNote);
-      hide(els.saveDriveBtn);
-      return;
-    }
-    hide(els.driveNote);
-    show(els.saveDriveBtn);
-    if (folder && folder.receiptsFolderId) {
-      els.driveStatusText.textContent = 'Saving to: ' + folderLabel();
-      hide(els.driveConnectBtn);
-      show(els.driveChangeBtn);
+    if (configured) {
+      hide(els.driveNote);
+      show(els.saveDriveBtn);
     } else {
-      els.driveStatusText.textContent = 'Connect Google Drive once to choose the Receipts folder.';
-      show(els.driveConnectBtn);
-      hide(els.driveChangeBtn);
+      show(els.driveNote);
+      show(els.saveDriveBtn);
     }
   }
 
@@ -653,56 +640,35 @@
     els.doneFilename.textContent = filename;
     var path = extra.folderPath || folderLabel();
     var where =
-      savedTo === 'Saved to Drive' ? 'Saved to ' + path + '.' :
+      savedTo === 'Saved to Drive' ? 'Saved to ' + path :
       savedTo === 'Waiting to upload' ? 'Saved on this device and waiting to upload to ' + path + ' when you are back online.' :
       savedTo === 'Shared' ? 'Shared with the filename above.' :
       'Downloaded with the filename above.';
     els.doneMessage.textContent = where;
+    if (els.doneLinkWrap) {
+      if (savedTo === 'Saved to Drive' && extra.fileUrl) {
+        els.doneLink.href = extra.fileUrl;
+        els.doneLink.textContent = 'Open in Google Drive';
+        show(els.doneLinkWrap);
+      } else {
+        els.doneLink.removeAttribute('href');
+        hide(els.doneLinkWrap);
+      }
+    }
     showScreen('done');
-  }
-
-  function setHomeDriveError(message) {
-    if (!els.driveHomeStatus) return;
-    setStatus(els.driveHomeStatus, message || '', false);
-  }
-
-  async function onConnectDrive() {
-    if (!ReceiptDrive.isConfigured()) {
-      setHomeDriveError('Google Drive is not configured.');
-      return;
-    }
-    els.driveConnectBtn.disabled = true;
-    if (els.driveChangeBtn) els.driveChangeBtn.disabled = true;
-    setHomeDriveError('');
-    setStatus(els.driveHomeStatus, 'Opening Google Drive…', true);
-    try {
-      await ReceiptDrive.connectFolder();
-      setStatus(els.driveHomeStatus, '', false);
-      renderDriveStatus();
-    } catch (err) {
-      setHomeDriveError(err && err.message ? err.message : 'Could not connect Google Drive.');
-    } finally {
-      els.driveConnectBtn.disabled = false;
-      if (els.driveChangeBtn) els.driveChangeBtn.disabled = false;
-    }
   }
 
   async function onSaveDrive() {
     if (!requireValues()) return;
     if (!ReceiptDrive.isConfigured()) {
-      setStatus(els.confirmStatus, 'Google Drive is not configured in config.js.', false);
+      setStatus(els.confirmStatus, 'Upload is not configured yet. You can still download or share the photo.', false);
       return;
     }
     els.saveDriveBtn.disabled = true;
     try {
-      if (!ReceiptDrive.hasFolder()) {
-        setStatus(els.confirmStatus, 'Connect Google Drive and pick the folder…', true);
-        await ReceiptDrive.connectFolder();
-        renderDriveStatus();
-      }
       setStatus(els.confirmStatus, 'Uploading to Google Drive…', true);
-      await ReceiptDrive.saveReceipt(currentFilename(), state.blob);
-      await recordAndFinish('Saved to Drive');
+      var result = await ReceiptDrive.saveReceipt(currentFilename(), state.blob);
+      await recordAndFinish('Saved to Drive', { fileUrl: result && result.url });
     } catch (err) {
       var Queue = window.ReceiptQueue;
       var online = typeof navigator === 'undefined' || navigator.onLine !== false;
@@ -722,10 +688,7 @@
           setStatus(els.confirmStatus, 'Offline, and the upload could not be queued: ' + (queueErr.message || queueErr), false);
         }
       } else {
-        setStatus(els.confirmStatus, err && err.message ? err.message : 'Upload failed.', false);
-        if (/no longer accessible|pick it again/i.test(err && err.message ? err.message : '')) {
-          renderDriveStatus();
-        }
+        setStatus(els.confirmStatus, err && err.message ? err.message : 'Upload failed. You can still download or share the photo.', false);
       }
     } finally {
       els.saveDriveBtn.disabled = false;
@@ -733,7 +696,7 @@
   }
 
   async function flushUploads() {
-    if (!ReceiptDrive.hasFolder || !ReceiptDrive.hasFolder()) return;
+    if (!ReceiptDrive.isConfigured || !ReceiptDrive.isConfigured()) return;
     try {
       var result = await ReceiptDrive.flushQueue();
       if (result && result.uploadedIds) {
@@ -977,9 +940,6 @@
     els.hintTip = $('hint-tip');
     els.filenameLive = $('filename-live');
     els.driveStatusText = $('drive-status-text');
-    els.driveConnectBtn = $('drive-connect-btn');
-    els.driveChangeBtn = $('drive-change-btn');
-    els.driveHomeStatus = $('drive-home-status');
     els.saveDriveBtn = $('save-drive-btn');
     els.driveNote = $('drive-note');
     els.shareBtn = $('share-btn');
@@ -987,6 +947,8 @@
     els.confirmStatus = $('confirm-status');
     els.confirmBack = $('confirm-back');
     els.doneMessage = $('done-message');
+    els.doneLinkWrap = $('done-link-wrap');
+    els.doneLink = $('done-link');
     els.doneFilename = $('done-filename');
     els.doneHome = $('done-home');
 
@@ -1009,8 +971,6 @@
     });
 
     els.rotateBtn.addEventListener('click', function () { onRotate(); });
-    els.driveConnectBtn.addEventListener('click', function () { onConnectDrive(); });
-    els.driveChangeBtn.addEventListener('click', function () { onConnectDrive(); });
     els.saveDriveBtn.addEventListener('click', function () { onSaveDrive(); });
     els.shareBtn.addEventListener('click', function () { onShare(); });
     els.downloadBtn.addEventListener('click', function () { onDownload(); });
